@@ -7,7 +7,7 @@
   "scripts": {
     "setup": "npm install && npm install --prefix backend && npm install --prefix frontend",
     "dev": "concurrently -n api,web -c blue,green \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
-    "build": "npm --prefix frontend run build",
+    "build": "npm ci --prefix backend --omit=dev && npm ci --prefix frontend --include=dev && npm --prefix frontend run build",
     "start": "npm --prefix backend start",
     "test": "npm --prefix backend test",
     "seed:demo": "npm --prefix backend run seed:demo",
