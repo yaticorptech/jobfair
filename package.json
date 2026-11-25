@@ -1,0 +1,20 @@
+{
+  "name": "job-fair",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Job fair portal. The website is in frontend/ (deployed on Vercel) and the server is in backend/ (deployed on Railway). These commands only make it easy to run both on one computer.",
+  "author": "Yaticorp",
+  "scripts": {
+    "setup": "npm install && npm install --prefix backend && npm install --prefix frontend",
+    "dev": "concurrently -n api,web -c blue,green \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix backend start",
+    "test": "npm --prefix backend test",
+    "seed:demo": "npm --prefix backend run seed:demo",
+    "reset": "npm --prefix backend run reset --",
+    "import:sqlite": "npm --prefix backend run import:sqlite"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7"
+  }
+}

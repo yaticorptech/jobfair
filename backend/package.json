@@ -1,0 +1,28 @@
+{
+  "name": "job-fair-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Job fair portal, server part: the API and the data (registrations, companies, desks, applications and tokens)",
+  "author": "Yaticorp",
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --watch src/index.js",
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\"",
+    "seed:demo": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/seed-demo.js",
+    "reset": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/reset.js",
+    "import:sqlite": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/import-sqlite.js"
+  },
+  "dependencies": {
+    "compression": "^1.8.2",
+    "express": "^4.22.3",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.9.1",
+    "multer": "^2.5.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  }
+}

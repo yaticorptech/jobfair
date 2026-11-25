@@ -1,0 +1,303 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--color-slate-50);
+  color: var(--color-slate-800);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* On iPhones a date field insists on its own width and pushes the page sideways.
+   Dropping the system styling lets it shrink to the space it is given like every other field. */
+input[type="date"] {
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Hide the scrollbar on horizontally scrolling chip rows */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pop-in {
+  animation: pop-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-in {
+    animation: none;
+  }
+}
+
+/* ───────── Organiser tables that do not fit ─────────
+   A table with many columns does not fit a phone, a tablet, or a small laptop with the side
+   menu open. The Table component adds "is-stacked" whenever the columns do not fit the space
+   they have, and every row then becomes a small card: the cell marked data-primary is the
+   card's heading; every other cell is one line with its column name on the left (data-label)
+   and the value on the right. With enough width the cards sit two or three side by side. */
+.table-wrap {
+  container-type: inline-size;
+}
+.stack-table.is-stacked,
+.stack-table.is-stacked tbody {
+  display: block;
+}
+.stack-table.is-stacked thead {
+  display: none;
+}
+.stack-table.is-stacked tr {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.9rem 1rem;
+}
+.stack-table.is-stacked td {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: none;
+  min-width: 0;
+  padding: 0;
+  text-align: right;
+  white-space: normal;
+}
+.stack-table.is-stacked td > div {
+  min-width: 0;
+}
+.stack-table.is-stacked td::before {
+  content: attr(data-label);
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-slate-500);
+  text-align: left;
+}
+.stack-table.is-stacked td[data-primary] {
+  order: -1;
+  display: block;
+  padding-bottom: 0.15rem;
+  font-size: 1rem;
+  text-align: left;
+}
+.stack-table.is-stacked td[data-primary]::before,
+.stack-table.is-stacked td[data-actions]::before {
+  content: none;
+}
+.stack-table.is-stacked td[data-actions] {
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 0.35rem;
+}
+/* Detail that is left out on phones to keep each card short. */
+@container (max-width: 639px) {
+  .stack-table.is-stacked td[data-phone-hide] {
+    display: none;
+  }
+}
+@container (min-width: 640px) {
+  .stack-table.is-stacked tbody {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stack-table.is-stacked tr {
+    border-right: 1px solid var(--color-slate-100);
+    border-bottom: 1px solid var(--color-slate-100);
+  }
+}
+@container (min-width: 1000px) {
+  .stack-table.is-stacked tbody {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ───────── Desk QR posters (Admin > QR codes) ─────────
+   Every size inside a poster is a share of the poster's own width (cqw), so the same poster
+   works as a small preview on the screen, a full A4 page, or a quarter of an A4 page. */
+.poster {
+  container-type: inline-size;
+  aspect-ratio: 190 / 272;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  color: #0f172a;
+  text-align: center;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.poster-head {
+  padding: 3cqw 4cqw;
+  background: #172554;
+  color: #fff;
+  font-size: 3.6cqw;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.poster-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-evenly;
+  padding: 2cqw 6cqw;
+}
+/* Says who the poster is for, so the two posters of a desk are not mixed up (also when printed in black and white). */
+.poster-tag {
+  display: inline-block;
+  margin-bottom: 2cqw;
+  padding: 0.9cqw 3.2cqw;
+  border: 0.5cqw solid #172554;
+  border-radius: 99cqw;
+  font-size: 3cqw;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #172554;
+}
+.poster-company .poster-head {
+  background: #92400e;
+}
+.poster-company .poster-tag {
+  border-color: #92400e;
+  background: #92400e;
+  color: #fff;
+}
+.poster-note {
+  margin-top: 0.6cqw;
+  font-size: 2.9cqw;
+  font-weight: 600;
+  color: #92400e;
+}
+/* The same line on a desk poster speaks to the company, quietly, under the words for candidates. */
+.poster-note-quiet {
+  font-weight: 500;
+  color: #475569;
+}
+.poster-title {
+  font-size: 9.5cqw;
+  font-weight: 800;
+  line-height: 1.1;
+  color: #172554;
+}
+.poster-label {
+  font-size: 4cqw;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #b45309;
+}
+.poster-room {
+  font-weight: 800;
+  line-height: 1.05;
+  color: #172554;
+  overflow-wrap: anywhere;
+}
+.poster-name {
+  margin-top: 2cqw;
+  font-weight: 800;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.poster-sub {
+  margin-top: 1cqw;
+  font-size: 3cqw;
+  color: #475569;
+}
+.poster-qr {
+  width: 46cqw;
+  height: 46cqw;
+  flex-shrink: 0;
+}
+.poster-cta {
+  font-size: 4.6cqw;
+  font-weight: 800;
+  color: #172554;
+}
+.poster-foot {
+  padding: 1cqw 4cqw 1.6cqw;
+  border-top: 0.2cqw solid #e2e8f0;
+  font-size: 2.3cqw;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+.poster-url {
+  margin-top: 0.6cqw;
+  font-size: 2.6cqw;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+@media screen {
+  .posters {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    gap: 1.25rem;
+  }
+  .poster {
+    border: 1px solid var(--color-slate-200);
+    border-radius: 1rem;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 10mm;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff;
+  }
+  .poster-slot {
+    break-inside: avoid;
+  }
+  /* One poster fills a page. No page break after the last one, or a blank page is printed. */
+  .per-1 .poster-slot {
+    width: 190mm;
+  }
+  .per-1:not(.solo) .poster-slot:not(:last-child) {
+    break-after: page;
+  }
+  /* Four posters to a page, with a thin line to cut along. */
+  .per-4::after {
+    content: "";
+    display: block;
+    clear: both;
+  }
+  .per-4 .poster-slot {
+    float: left;
+    width: 95mm;
+  }
+  .per-4 .poster {
+    outline: 0.2mm dashed #94a3b8;
+    outline-offset: -0.1mm;
+  }
+}

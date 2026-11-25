@@ -1,0 +1,33 @@
+Setup: 20 companies, each at its own desk.
+
+Rush: 300 candidates + 20 company desks + organiser, all at once: 7.3 s
+Burst: 600 requests fired at the same instant, all answered in 507 ms
+Registered: 300 · applications: 885 (companies see 885) · interviews done: 154
+Excel export after the rush: 200
+Token check: every desk has tokens 1, 2, 3 … with no duplicate and no gap
+
+Endpoint                 calls  errors   p50 ms   p95 ms   max ms
+candidate companies       1500       0       87      118      186
+view company               885       0       68       90      128
+apply                      885       0      147      188      304
+candidate login            360       0        1       39       64
+public info                300       0     2134     4417     4653
+register                   300       0       98      128      162
+me                         300       0       38       51       95
+scan desk QR               300       0       27       50       68
+burst: public info         300       0      207      469      495
+burst: companies           300       0      210      473      497
+company list               181       0       66      166      235
+call next                  161       0      138     1692     2060
+start interview            154       0      121      231      252
+interview page             154       0       55      139      165
+save interview             154       0       56      173      219
+admin add company           20       0        3        5        5
+company login               20       0       47       88       88
+company links desk          20       0       28       46       46
+admin overview              11       0       90      147      147
+admin applications          11       0      154      292      292
+admin login                  1       0       58       58       58
+add desks                    1       0      153      153      153
+
+Total: 6318 requests, 0 unexpected errors
