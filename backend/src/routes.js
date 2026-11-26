@@ -969,6 +969,135 @@ router.post('/admin/login', (req, res) => {
 
 const statusSum = (status) => ({ $sum: { $cond: [{ $eq: ['$status', status] }, 1, 0] } });
 
+// Numbers for the charts on the admin overview. Candidate details are bucketed here in one pass
+// (a job fair has thousands of candidates at most). Days and hours are in the fair's time zone.
+const dayHour = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' });
+function localParts(utc) {
+  const p = Object.fromEntries(dayHour.formatToParts(new Date(`${utc.replace(' ', 'T')}Z`)).map((x) => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
+}
+function topCounts(values, limit) {
+  const m = new Map();
+  for (const raw of values) {
+    const v = String(raw ?? '').trim();
+    if (!v) continue;
+    const key = v.toLowerCase();
+    const hit = m.get(key) || { label: v, value: 0 };
+    hit.value += 1;
+    m.set(key, hit);
+  }
+  const all = [...m.values()].sort((a, b) => b.value - a.value || nocase(a.label, b.label));
+  if (all.length <= limit) return all;
+  const rest = all.slice(limit - 1).reduce((n, x) => n + x.value, 0);
+  return [...all.slice(0, limit - 1), { label: 'Other', value: rest, other: true }];
+}
+
+async function overviewCharts(appliedIds, named) {
+  const [rows, aiCount, perCandidate, appTimes] = await Promise.all([
+    candidates
+      .find({}, { projection: { _id: 0, id: 1, created_at: 1, qualification: 1, gender: 1, experience_type: 1, experience_years: 1, passing_year: 1, city: 1, dob: 1, resume_file: 1, languages: 1 } })
+      .toArray(),
+    aiCourseLeads.countDocuments(),
+    applications.aggregate([{ $group: { _id: '$candidate_id', n: { $sum: 1 } } }, { $group: { _id: '$n', people: { $sum: 1 } } }]).toArray(),
+    applications.find({}, { projection: { _id: 0, created_at: 1 } }).toArray(),
+  ]);
+
+  const today = localParts(new Date().toISOString().replace('T', ' ').slice(0, 19)).day;
+  const byDay = new Map();
+  const byHour = Array.from({ length: 24 }, () => 0);
+  const ages = { 'Under 20': 0, '20–24': 0, '25–29': 0, '30–34': 0, '35+': 0 };
+  const now = Date.now();
+  let resumes = 0;
+  for (const r of rows) {
+    if (r.created_at) {
+      const { day, hour } = localParts(r.created_at);
+      byDay.set(day, (byDay.get(day) || 0) + 1);
+      if (day === today) byHour[hour] += 1;
+    }
+    const dob = /^\d{4}-\d{2}-\d{2}$/.test(r.dob || '') ? Date.parse(`${r.dob}T00:00:00Z`) : NaN;
+    if (!Number.isNaN(dob)) {
+      const age = (now - dob) / (365.25 * 86400000);
+      ages[age < 20 ? 'Under 20' : age < 25 ? '20–24' : age < 30 ? '25–29' : age < 35 ? '30–34' : '35+'] += 1;
+    }
+    if (r.resume_file) resumes += 1;
+  }
+  // Applications per day, same days as registrations when possible.
+  const appsByDay = new Map();
+  const appsByHour = Array.from({ length: 24 }, () => 0);
+  for (const a of appTimes) {
+    if (!a.created_at) continue;
+    const { day, hour } = localParts(a.created_at);
+    appsByDay.set(day, (appsByDay.get(day) || 0) + 1);
+    if (day === today) appsByHour[hour] += 1;
+  }
+  for (const d of appsByDay.keys()) if (!byDay.has(d)) byDay.set(d, 0);
+  // Year of passing: the last 8 years one by one, older ones together.
+  const thisYear = new Date().getFullYear();
+  const years = new Map();
+  for (const r of rows) {
+    const y = Number(r.passing_year);
+    if (!y) continue;
+    const key = y < thisYear - 6 ? `Before ${thisYear - 6}` : String(y);
+    years.set(key, (years.get(key) || 0) + 1);
+  }
+  const yearOrder = [`Before ${thisYear - 6}`, ...Array.from({ length: 10 }, (_, i) => String(thisYear - 6 + i))];
+  const passing = yearOrder.filter((k) => years.has(k)).map((label) => ({ label, value: years.get(label) }));
+  const exp = { Fresher: 0, 'Under 1 yr': 0, '1–2 yrs': 0, '3–5 yrs': 0, '6–10 yrs': 0, '10+ yrs': 0 };
+  for (const r of rows) {
+    const y = Number(r.experience_years) || 0;
+    exp[r.experience_type !== 'experienced' ? 'Fresher' : y < 1 ? 'Under 1 yr' : y <= 2 ? '1–2 yrs' : y <= 5 ? '3–5 yrs' : y <= 10 ? '6–10 yrs' : '10+ yrs'] += 1;
+  }
+
+  // The last 14 days that had registrations, oldest first, with empty days in between filled in.
+  const days = [...byDay.keys()].sort();
+  const timeline = [];
+  if (days.length) {
+    const end = new Date(`${days[days.length - 1]}T00:00:00Z`);
+    const start = new Date(Math.max(Date.parse(`${days[0]}T00:00:00Z`), end - 13 * 86400000));
+    for (let d = start; d <= end; d = new Date(d.getTime() + 86400000)) {
+      const key = d.toISOString().slice(0, 10);
+      timeline.push({ day: key, value: byDay.get(key) || 0, applications: appsByDay.get(key) || 0 });
+    }
+  }
+
+  const applied = new Set(appliedIds);
+  const spread = Object.fromEntries(perCandidate.map((x) => [x._id, x.people]));
+  return {
+    registrations_by_day: timeline,
+    registrations_today_by_hour: byHour,
+    applications_today_by_hour: appsByHour,
+    passing_year: passing,
+    experience: Object.entries(exp).map(([label, value]) => ({ label, value })),
+    today,
+    candidates: {
+      total: rows.length,
+      applied: rows.filter((r) => applied.has(r.id)).length,
+      with_resume: resumes,
+      ai_course: aiCount,
+      freshers: rows.filter((r) => r.experience_type !== 'experienced').length,
+    },
+    applications_per_candidate: [
+      { label: 'Not applied', value: rows.length - applied.size },
+      { label: '1 company', value: spread[1] || 0 },
+      { label: '2 companies', value: spread[2] || 0 },
+      { label: '3–4 companies', value: (spread[3] || 0) + (spread[4] || 0) },
+      { label: '5+ companies', value: Object.entries(spread).filter(([n]) => Number(n) >= 5).reduce((a, [, v]) => a + v, 0) },
+    ],
+    qualification: topCounts(rows.map((r) => r.qualification), 8),
+    city: topCounts(rows.map((r) => (r.city || '').split(',')[0]), 8),
+    gender: topCounts(rows.map((r) => r.gender), 4),
+    age: Object.entries(ages).map(([label, value]) => ({ label, value })),
+    languages: topCounts(rows.flatMap((r) => (r.languages || '').split(',')), 8),
+    industry: topCounts(named.map((c) => c.industry), 8),
+    companies: {
+      total: named.length,
+      listed: named.filter((c) => c.active).length,
+      with_desk: named.filter((c) => c.room_no).length,
+      with_applicants: 0, // filled in by the caller
+    },
+  };
+}
+
 router.get(
   '/admin/overview',
   requireAdmin,
@@ -977,7 +1106,7 @@ router.get(
     for (const [status, n] of await countBy(applications, 'status')) byStatus[status] = n;
 
     const [named, perCompany, recent, candidateCount, appliedCandidates, held, settings] = await Promise.all([
-      companies.find({ name: { $ne: '' } }, { projection: { _id: 0, id: 1, name: 1, room_no: 1, active: 1 } }).toArray(),
+      companies.find({ name: { $ne: '' } }, { projection: { _id: 0, id: 1, name: 1, room_no: 1, active: 1, industry: 1 } }).toArray(),
       applications
         .aggregate([
           {
@@ -1005,6 +1134,8 @@ router.get(
     const list = named
       .map((c) => ({ ...c, ...(counts.get(c.id) ?? none), active: Boolean(c.active) }))
       .sort((a, b) => b.applicants - a.applicants || nocase(a.name, b.name));
+    const charts = await overviewCharts(appliedCandidates, named);
+    charts.companies.with_applicants = list.filter((c) => c.applicants > 0).length;
 
     res.json({
       totals: {
@@ -1017,6 +1148,7 @@ router.get(
         ...byStatus,
       },
       companies: list,
+      charts,
       recent: recent.map((r) => ({ ...r, reg_no: regNo(r.id) })),
       demo_data: settings.demo_data === '1',
     });

@@ -1,9 +1,153 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Building2, ClipboardList, Star, Trophy, TriangleAlert, Users } from 'lucide-react';
-import { api, fmtTime } from '../lib.jsx';
+import { STATUS, api, fmtTime } from '../lib.jsx';
+import { ChartCard, ClusteredColumns, Combo, Donut, LineChart, Ring, Segmented, VBars } from './charts.jsx';
 import { Button, Card, ErrorNote, Modal, Notice, PageLoader, Pager, rangeLabel, usePaging, useToast } from '../ui.jsx';
 import { PageTitle, Table, Td } from './shared.jsx';
+
+const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const dayLabel = (d) => `${+d.slice(8, 10)} ${MONTH[+d.slice(5, 7) - 1]}`;
+const hourLabel = (h) => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+
+// Everything below the number tiles: who registered, who applied, how interviews are going.
+// Pies for shares of a whole, columns for counts, areas for change over time, a combo where
+// two measures share a scale.
+function Charts({ c, t, companies }) {
+  const [range, setRange] = useState('days');
+  const [mixRange, setMixRange] = useState('days');
+  const cand = c.candidates;
+  const notApplied = cand.total - cand.applied;
+  const hourPoint = (h, a, b) => ({ key: h, label: hourLabel(h), long: `${hourLabel(h)} – ${hourLabel((h + 1) % 24)}`, a, b });
+  const dayPoint = (d, a, b) => ({ key: d.day, label: dayLabel(d.day), long: `${dayLabel(d.day)}${d.day === c.today ? ' (today)' : ''}`, a, b });
+  const appsHour = c.applications_today_by_hour || [];
+
+  const combo = range === 'days' ? c.registrations_by_day.map((d) => dayPoint(d, d.value, d.applications || 0)) : c.registrations_today_by_hour.map((v, h) => hourPoint(h, v, appsHour[h] || 0));
+  const clustered = mixRange === 'days' ? c.registrations_by_day.map((d) => dayPoint(d, d.value, d.applications || 0)) : c.registrations_today_by_hour.map((v, h) => hourPoint(h, v, appsHour[h] || 0));
+
+  // Running totals: how the numbers have grown, day by day. The 14-day window may start after the
+  // first registrations, so the totals start from what came before it.
+  let runA = 0;
+  let runB = 0;
+  const growth = c.registrations_by_day.map((d) => {
+    runA += d.value;
+    runB += d.applications || 0;
+    return { key: d.day, label: dayLabel(d.day), long: dayLabel(d.day), a: runA, b: runB };
+  });
+  const before = { a: Math.max(0, cand.total - runA), b: Math.max(0, t.applications - runB) };
+  for (const g of growth) Object.assign(g, { a: g.a + before.a, b: g.b + before.b });
+
+  const pipeline = ['applied', 'interviewed', 'shortlisted', 'selected', 'rejected'].map((k) => ({
+    label: k === 'applied' ? 'Waiting for interview' : STATUS[k].label,
+    value: t[k] || 0,
+  }));
+  const topCompanies = companies
+    .filter((x) => x.applicants > 0)
+    .slice(0, 8)
+    .map((x) => ({ label: x.name, value: x.applicants }));
+  const days = (value, set) => (
+    <Segmented
+      value={value}
+      onChange={set}
+      options={[
+        { value: 'days', label: 'By day' },
+        { value: 'hours', label: 'Today' },
+      ]}
+    />
+  );
+
+  return (
+    <section className="mt-6" aria-label="Charts">
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ChartCard title="Candidates at a glance" sub={`${cand.total.toLocaleString('en-IN')} registered`}>
+          <div className="mb-5 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-blue-50 p-3">
+              <p className="text-2xl font-extrabold tabular-nums text-blue-800">{cand.applied.toLocaleString('en-IN')}</p>
+              <p className="text-xs font-bold text-blue-900/70">Applied to a company</p>
+            </div>
+            <div className="rounded-2xl bg-amber-50 p-3">
+              <p className="text-2xl font-extrabold tabular-nums text-amber-800">{notApplied.toLocaleString('en-IN')}</p>
+              <p className="text-xs font-bold text-amber-900/70">Registered, not applied</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-5">
+            <Ring label="Have applied" value={cand.applied} total={cand.total} />
+            <Ring label="Freshers" value={cand.freshers} total={cand.total} color="#e8650a" />
+            <Ring label="Uploaded a resume" value={cand.with_resume} total={cand.total} color="#6a4ce2" />
+            <Ring label="Want the AI Course" value={cand.ai_course} total={cand.total} color="#008a17" />
+          </div>
+        </ChartCard>
+
+        <ChartCard
+          className="lg:col-span-2"
+          title="Registrations and applications"
+          sub={range === 'days' ? 'Per day: registrations as columns, applications as a line' : `Per hour, ${dayLabel(c.today)}`}
+          action={days(range, setRange)}
+        >
+          <Combo points={combo} names={['Registrations', 'Applications']} empty={range === 'days' ? 'Nothing yet' : 'Nothing today yet'} />
+        </ChartCard>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <ChartCard title="Side by side" sub={mixRange === 'days' ? 'Registrations and applications per day' : `Per hour, ${dayLabel(c.today)}`} action={days(mixRange, setMixRange)}>
+          <ClusteredColumns points={clustered} names={['Registrations', 'Applications']} empty="Nothing yet" />
+        </ChartCard>
+        <ChartCard title="Growth" sub="Running total of candidates and applications">
+          <LineChart area points={growth} names={['Candidates', 'Applications']} empty="Nothing yet" />
+        </ChartCard>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ChartCard title="Interview progress" sub={`${t.applications.toLocaleString('en-IN')} applications by stage`}>
+          <Donut items={pipeline} empty="No applications yet" center="Applications" />
+        </ChartCard>
+        <ChartCard title="Gender">
+          <Donut items={c.gender} empty="No candidates yet" center="Candidates" />
+        </ChartCard>
+        <ChartCard title="Qualification" sub="Highest qualification">
+          <Donut items={c.qualification} empty="No candidates yet" center="Candidates" />
+        </ChartCard>
+
+        <ChartCard title="Where candidates are from" sub="Top towns and cities">
+          <Donut items={c.city} empty="No candidates yet" center="Candidates" />
+        </ChartCard>
+        <ChartCard title="Age group">
+          <VBars items={c.age} total={cand.total} empty="No candidates yet" />
+        </ChartCard>
+        <ChartCard title="Year of passing">
+          <VBars items={c.passing_year || []} total={cand.total} empty="No candidates yet" />
+        </ChartCard>
+
+        <ChartCard title="Work experience">
+          <VBars items={c.experience || []} total={cand.total} empty="No candidates yet" />
+        </ChartCard>
+        <ChartCard title="Companies applied to, per candidate" sub="How widely candidates are applying">
+          <VBars items={c.applications_per_candidate} total={cand.total} empty="No candidates yet" />
+        </ChartCard>
+        <ChartCard title="Languages known" sub="A candidate can know several">
+          <VBars items={c.languages.filter((x) => !x.other)} total={cand.total} empty="No languages given yet" />
+        </ChartCard>
+
+        <ChartCard title="Most applied companies" sub="Top 8 by applications" className="md:col-span-2">
+          <VBars items={topCompanies} total={t.applications} empty="No applications yet" />
+        </ChartCard>
+        <ChartCard title="Companies" sub={`${c.companies.total.toLocaleString('en-IN')} registered`}>
+          <div className="grid grid-cols-3 gap-2">
+            <Ring label="Listed" value={c.companies.listed} total={c.companies.total} />
+            <Ring label="Have a desk" value={c.companies.with_desk} total={c.companies.total} color="#e8650a" />
+            <Ring label="Got applications" value={c.companies.with_applicants} total={c.companies.total} color="#008a17" />
+          </div>
+          {c.industry.length > 0 && (
+            <>
+              <p className="mt-5 mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">By industry</p>
+              <Donut items={c.industry} center="Companies" />
+            </>
+          )}
+        </ChartCard>
+      </div>
+    </section>
+  );
+}
 
 function Tile({ icon: Icon, tone, value, label, sub }) {
   return (
@@ -85,6 +229,8 @@ export default function Overview() {
         <Tile icon={Star} tone="bg-amber-100 text-amber-800" value={t.shortlisted} label="Shortlisted" />
         <Tile icon={Trophy} tone="bg-emerald-100 text-emerald-800" value={t.selected} label="Selected" />
       </div>
+
+      {data.charts && <Charts c={data.charts} t={t} companies={data.companies} />}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-3">
         <section className="min-w-0 xl:col-span-2">
