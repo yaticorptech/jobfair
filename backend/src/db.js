@@ -42,6 +42,9 @@ export const settings = db.collection('settings'); // { _id: key, value }
 export const candidates = db.collection('candidates');
 export const companies = db.collection('companies');
 export const applications = db.collection('applications');
+// Candidates who said Yes to the Government Certified AI Course when registering. Kept apart
+// from candidates; nothing is saved here for a candidate who said No.
+export const aiCourseLeads = db.collection('ai_course_leads');
 const counters = db.collection('counters'); // { _id: collection name, seq: last number given out }
 
 export const closeDb = () => client.close();
@@ -91,6 +94,7 @@ await Promise.all([
   applications.createIndex({ id: 1 }, { unique: true }),
   applications.createIndex({ candidate_id: 1, company_id: 1 }, { unique: true }),
   applications.createIndex({ company_id: 1, token_no: 1 }, { unique: true }),
+  aiCourseLeads.createIndex({ candidate_id: 1 }, { unique: true }),
 ]);
 
 // Each company logs in to its dashboard with an access code that the organisers hand out.

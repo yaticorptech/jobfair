@@ -17,6 +17,7 @@ const BTN_BASE =
 const BTN_VARIANTS = {
   primary: 'bg-blue-600 text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700',
   accent: 'bg-amber-400 text-slate-900 shadow-sm shadow-amber-500/30 hover:bg-amber-300',
+  tricolor: 'bg-[#138808] text-white shadow-sm shadow-green-800/30 hover:bg-[#0F6E06]',
   secondary: 'bg-white text-slate-800 ring-1 ring-inset ring-slate-200 hover:bg-slate-50',
   soft: 'bg-blue-50 text-blue-700 hover:bg-blue-100',
   ghost: 'text-slate-600 hover:bg-slate-100',
@@ -179,17 +180,19 @@ export function StickyBar({ children, className = 'items-center gap-3' }) {
 
 // "Developed by Yaticorp": the line at the foot of every screen. (The printed posters carry their own.)
 export function Credit({ className }) {
+  const name = DEVELOPER.url ? (
+    <a href={DEVELOPER.url} target="_blank" rel="noopener noreferrer" className="font-bold text-slate-500 underline-offset-4 hover:underline">
+      {DEVELOPER.name}
+    </a>
+  ) : (
+    <span className="font-bold text-slate-500">{DEVELOPER.name}</span>
+  );
+  // The Blue Chip Connect logo, with "Product of Yaticorp" under it.
   return (
-    <p className={cx('text-center text-xs text-slate-400 print:hidden', className)}>
-      Developed by{' '}
-      {DEVELOPER.url ? (
-        <a href={DEVELOPER.url} target="_blank" rel="noopener noreferrer" className="font-bold text-slate-500 underline-offset-4 hover:underline">
-          {DEVELOPER.name}
-        </a>
-      ) : (
-        <span className="font-bold text-slate-500">{DEVELOPER.name}</span>
-      )}
-    </p>
+    <div className={cx('flex flex-col items-center gap-1.5 text-center print:hidden', className)}>
+      <img src="/logo.png" alt={SITE_NAME} width="1127" height="96" className="h-3.5 w-auto opacity-80 mix-blend-multiply" />
+      <p className="text-xs text-slate-400">Product of {name}</p>
+    </div>
   );
 }
 

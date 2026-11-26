@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Building2, ChevronRight, ClipboardList, Ellipsis, ExternalLink, LayoutDashboard, LogOut, QrCode, Settings as SettingsIcon, Users } from 'lucide-react';
+import { BadgeCheck, Building2, ChevronRight, ClipboardList, Ellipsis, ExternalLink, LayoutDashboard, LogOut, QrCode, Settings as SettingsIcon, Users } from 'lucide-react';
 import { setToken, useInfo } from '../lib.jsx';
 import { Brand, Credit, Modal, cx } from '../ui.jsx';
 import Overview from './Overview.jsx';
@@ -9,6 +9,7 @@ import QrCodes from './QrCodes.jsx';
 import Candidates from './Candidates.jsx';
 import Applications from './Applications.jsx';
 import Settings from './Settings.jsx';
+import AiCourse from './AiCourse.jsx';
 
 // "more" sections are reached through the More button on phones, where the bottom bar has room for five.
 const NAV = [
@@ -17,6 +18,7 @@ const NAV = [
   { to: '/admin/qr', label: 'QR codes', icon: QrCode, more: true },
   { to: '/admin/candidates', label: 'Candidates', icon: Users },
   { to: '/admin/applications', label: 'Applications', short: 'Applied', icon: ClipboardList },
+  { to: '/admin/ai-course', label: 'AI Course', icon: BadgeCheck, more: true },
   { to: '/admin/settings', label: 'Settings', icon: SettingsIcon, more: true },
 ];
 const BAR = NAV.filter((item) => !item.more);
@@ -87,6 +89,7 @@ export default function Admin() {
           <Route path="qr" element={<QrCodes />} />
           <Route path="candidates" element={<Candidates />} />
           <Route path="applications" element={<Applications />} />
+          <Route path="ai-course" element={<AiCourse />} />
           <Route path="settings" element={<Settings />} />
         </Routes>
         <Credit className="mt-10" />

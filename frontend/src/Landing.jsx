@@ -3,31 +3,31 @@ import { ArrowRight, CalendarDays, Clock, GraduationCap, MapPin, Megaphone, Phon
 import { fmtDate, getToken, splitList, useInfo } from './lib.jsx';
 import { Brand, Button, Card, Credit, Notice, StickyBar } from './ui.jsx';
 
-// "Blue Chip Connect" → "Connect" is shown in colour, like the logo ("Free Mega Job Fair" → "Job Fair").
-function FairTitle({ name }) {
-  const match = /^(.*?)((?:connect|job\s*fair).*)$/i.exec(name);
-  if (!match || !match[1].trim()) return <>{name}</>;
-  return (
-    <>
-      {match[1]}
-      <span className="block text-amber-300">{match[2]}</span>
-    </>
-  );
-}
 
 function Detail({ icon: Icon, label, children }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-white/15">
-        <Icon className="size-5 text-amber-300" aria-hidden="true" />
+      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#138808]/10 sm:size-11 sm:rounded-2xl">
+        <Icon className="size-4 text-[#138808] sm:size-5" aria-hidden="true" />
       </span>
       <div className="min-w-0">
-        <dt className="text-[11px] font-bold uppercase tracking-wider text-blue-200">{label}</dt>
-        <dd className="font-bold leading-snug">{children}</dd>
+        <dt className="text-[11px] font-bold uppercase tracking-wider text-[#138808]">{label}</dt>
+        <dd className="text-[15px] font-bold leading-snug text-slate-900 sm:text-base">{children}</dd>
       </div>
     </div>
   );
 }
+
+// Branding from the official poster: the organising committee and the person presiding.
+const ORGANISER = {
+  name: 'KPCC Prachara Samithi, Udupi District',
+  area: 'Kaup Assembly Constituency',
+};
+const LEADER = {
+  name: 'Shri Vinay Kumar Sorake',
+  role: 'Former Minister · President, KPCC Prachara Samithi',
+  photo: '/leader.jpg',
+};
 
 const STEPS = [
   { title: 'Register', text: 'Fill in your details once. It takes two minutes.' },
@@ -56,7 +56,7 @@ export default function Landing() {
             Register now <ArrowRight className="size-5" aria-hidden="true" />
           </Button>
         ) : (
-          <p className={main === 'accent' ? 'flex-1 self-center text-[15px] font-bold text-blue-100' : 'flex-1 text-[15px] font-bold text-slate-600'}>Registration is closed</p>
+          <p className={main === 'tricolor' ? 'flex-1 self-center text-[15px] font-bold text-slate-600' : 'flex-1 text-[15px] font-bold text-slate-600'}>Registration is closed</p>
         )}
         <Button as={Link} to="/login" size="lg" variant="secondary">
           Login
@@ -77,20 +77,45 @@ export default function Landing() {
           while the rest of the page scrolls on the right. */}
       <main className="mx-auto max-w-2xl space-y-4 px-4 lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:items-start lg:gap-6 lg:space-y-0 lg:px-8">
         {/* The event at a glance */}
-        <section className="rounded-[28px] bg-blue-600 p-6 text-white shadow-lg shadow-blue-600/25 sm:p-8 lg:sticky lg:top-6 lg:p-10">
-          <h1 className="text-[2.6rem] font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
-            <FairTitle name={info.fair_name} />
-          </h1>
+        {/* On phones and tablets the event card and the notice fill the first screen together,
+            so "How it works" starts below it. */}
+        <div className={`flex flex-col gap-4 lg:sticky lg:top-6 lg:block max-lg:min-h-[calc(100svh-165px-max(0px,env(safe-area-inset-bottom)-12px))]`}>
+        <section className="relative overflow-hidden rounded-[28px] max-lg:flex max-lg:flex-1 max-lg:flex-col bg-gradient-to-b from-[#FFE8CF] via-white to-[#DDF3E0] text-[#0B1F5C] shadow-lg shadow-orange-900/10 ring-1 ring-orange-100 px-5 pb-5 pt-6 sm:p-8 lg:p-10">
+          {/* Tricolour edge, as on the poster */}
+          <div className="absolute inset-x-0 top-0 flex h-2" aria-hidden="true">
+            <span className="flex-1 bg-[#FF9933]" />
+            <span className="grid flex-1 place-items-center bg-white">
+              <span className="size-1.5 rounded-full ring-[1.5px] ring-[#0B1F5C]" />
+            </span>
+            <span className="flex-1 bg-[#138808]" />
+          </div>
+
+          <div className="mb-[clamp(1rem,3.5svh,2rem)] flex items-center gap-3 lg:mb-6">
+            <img src="/congress.png" alt="Indian National Congress" className="size-10 shrink-0 rounded-full bg-white object-cover ring-2 ring-orange-200 sm:size-11" />
+            <div className="min-w-0 leading-tight">
+              <p className="text-sm font-extrabold text-slate-900">{ORGANISER.name}</p>
+              <p className="text-xs font-semibold text-slate-500">{ORGANISER.area}</p>
+            </div>
+          </div>
+
+          {/* The poster's headline: ಉಚಿತ ಬೃಹತ್ ಉದ್ಯೋಗ ಮೇಳ = Free Mega Job Fair */}
+          <div className="mb-[clamp(1rem,3svh,1.75rem)] lg:mb-6">
+            <h1 className="text-[1.75rem] font-extrabold leading-[1.05] tracking-tight text-[#0B1F5C] min-[400px]:text-[2rem] sm:text-5xl lg:text-[2.6rem]">
+              Free Mega <span className="text-[#E8650A]">Job Fair</span>
+              <span className="sr-only"> · {info.fair_name}</span>
+            </h1>
+            <p lang="kn" className="mt-1.5 text-[15px] font-bold text-[#138808] sm:text-base">ಉಚಿತ ಬೃಹತ್ ಉದ್ಯೋಗ ಮೇಳ</p>
+          </div>
           {highlights.length > 0 && (
-            <ul className="mt-4 flex flex-wrap gap-2">
+            <ul className="grid grid-cols-2 gap-1.5 sm:gap-2">
               {highlights.map((h) => (
-                <li key={h} className="rounded-full bg-white/15 px-3 py-1.5 text-sm font-bold">
+                <li key={h} className="flex min-h-8 items-center justify-center rounded-full bg-white px-2 py-1 text-center text-xs sm:min-h-9 sm:py-1.5 sm:text-[13px] font-bold leading-tight text-[#B34A00] ring-1 ring-orange-200 sm:px-3 sm:text-sm">
                   {h}
                 </li>
               ))}
             </ul>
           )}
-          <dl className="mt-6 space-y-3.5">
+          <dl className="mt-[clamp(1rem,3.5svh,2rem)] space-y-[clamp(0.625rem,2svh,1.125rem)] lg:mt-6 lg:space-y-3.5">
             {info.fair_date && (
               <Detail icon={CalendarDays} label="Date">
                 {fmtDate(info.fair_date)}
@@ -107,15 +132,42 @@ export default function Landing() {
               </Detail>
             )}
           </dl>
+
+
+          {/* Any height left on a tall phone sits here, just above the leader panel. */}
+          <div className="min-h-[clamp(1rem,3.5svh,2rem)] flex-1 lg:hidden" aria-hidden="true" />
+          <figure className="flex items-center gap-3 rounded-2xl bg-white/80 p-2.5 pr-3 sm:gap-4 sm:rounded-3xl lg:mt-6 sm:p-3 sm:pr-4 ring-1 ring-[#138808]/20 backdrop-blur">
+            <img
+              src={LEADER.photo}
+              alt={LEADER.name}
+              className="size-16 shrink-0 rounded-xl object-cover object-top ring-2 ring-[#FF9933] sm:size-18 sm:rounded-2xl"
+            />
+            <figcaption className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#E8650A]">Presided by</p>
+              <p className="text-[15px] font-extrabold leading-snug text-slate-900 sm:text-base">{LEADER.name}</p>
+              <p className="text-xs font-semibold leading-snug text-slate-600">{LEADER.role}</p>
+            </figcaption>
+          </figure>
+
           {/* On a laptop the buttons sit here; on phones they are in the bar at the bottom. */}
-          <div className="mt-8 hidden gap-3 lg:flex">{actions('accent')}</div>
+          <div className="mt-8 hidden gap-3 lg:flex">{actions('tricolor')}</div>
         </section>
+        {info.notice && (
+          <div className="lg:hidden">
+            <Notice icon={Megaphone}>
+              <p className="whitespace-pre-line">{info.notice}</p>
+            </Notice>
+          </div>
+        )}
+        </div>
 
         <div className="space-y-4">
         {info.notice && (
-          <Notice icon={Megaphone}>
-            <p className="whitespace-pre-line">{info.notice}</p>
-          </Notice>
+          <div className="hidden lg:block">
+            <Notice icon={Megaphone}>
+              <p className="whitespace-pre-line">{info.notice}</p>
+            </Notice>
+          </div>
         )}
 
         <Card className="p-5 sm:p-6">
@@ -203,7 +255,7 @@ export default function Landing() {
 
       {/* On phones the main action stays on screen however far the page is scrolled. */}
       <div className="lg:hidden">
-        <StickyBar>{actions('primary')}</StickyBar>
+        <StickyBar>{actions('tricolor')}</StickyBar>
       </div>
     </div>
   );

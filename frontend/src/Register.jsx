@@ -1,13 +1,68 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, DoorClosed } from 'lucide-react';
+import { ArrowRight, BadgeCheck, Check, DoorClosed } from 'lucide-react';
 import { api, getToken, nextPath, setToken, useInfo, withNext } from './lib.jsx';
 import { Button, Card, Credit, Empty, StickyBar, TopBar, cx, useToast } from './ui.jsx';
 import { FIELD_GROUPS, candidateErrors, emptyCandidate } from './candidate/CandidateFields.jsx';
 
+// The last screen of registration only: would the candidate like the Government Certified AI
+// Course? On Yes the server also saves their details in a separate list (ai_course_leads).
+function AiCourseFields({ v, set, errors }) {
+  const options = [
+    { value: 'yes', title: 'Yes, I am interested' },
+    { value: 'no', title: 'No, thank you' },
+  ];
+  return (
+    <div className="sm:col-span-2" data-error={errors.ai_course ? '' : undefined}>
+      <div className="flex items-start gap-3.5 rounded-2xl bg-gradient-to-br from-[#FFF1E2] to-[#E6F5E8] p-4 ring-1 ring-orange-100">
+        <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-white text-[#138808] shadow-xs">
+          <BadgeCheck className="size-6" aria-hidden="true" />
+        </span>
+        <div>
+          <p className="font-extrabold text-slate-900">Government Certified AI Course</p>
+          <p className="mt-0.5 text-sm leading-relaxed text-slate-600">Learn practical AI skills that employers are asking for, and earn a government recognised certificate.</p>
+        </div>
+      </div>
+
+      <fieldset className="mt-4">
+        <legend className="text-[15px] font-bold text-slate-900">
+          Do you want to join the Government Certified AI Course? <span className="text-rose-600">*</span>
+        </legend>
+        <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+          {options.map((o) => {
+            const active = v.ai_course === o.value;
+            return (
+              <label
+                key={o.value}
+                className={cx(
+                  'flex min-h-14 cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 transition has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-blue-600',
+                  active ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-600' : 'border-slate-200 bg-white hover:bg-slate-50',
+                  errors.ai_course && !v.ai_course && 'border-rose-300',
+                )}
+              >
+                <input type="radio" name="ai_course" value={o.value} checked={active} onChange={() => set('ai_course', o.value)} className="sr-only" />
+                <span className={cx('grid size-5 shrink-0 place-items-center rounded-full border-2', active ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300')}>
+                  {active && <Check className="size-3" strokeWidth={3.5} aria-hidden="true" />}
+                </span>
+                <span className="font-bold text-slate-900">{o.title}</span>
+              </label>
+            );
+          })}
+        </div>
+        {errors.ai_course && <p className="mt-2 text-sm font-semibold text-rose-600">{errors.ai_course}</p>}
+      </fieldset>
+    </div>
+  );
+}
+
 // Registration is split into short steps, one per screen. There is no password: afterwards
 // candidates log in with their mobile number alone.
-const STEP_COUNT = FIELD_GROUPS.length;
+const STEPS = [
+  ...FIELD_GROUPS,
+  { title: 'AI Course', sub: 'One last question before you register', fields: ['ai_course'], Fields: AiCourseFields },
+];
+const STEP_COUNT = STEPS.length;
+const aiCourseErrors = (v) => (v.ai_course ? {} : { ai_course: 'Please choose Yes or No' });
 
 export default function Register() {
   const { info } = useInfo();
@@ -16,7 +71,7 @@ export default function Register() {
   // Set when the candidate came from a desk QR code: they go back to that company afterwards.
   const next = nextPath(useLocation().search);
   const [step, setStep] = useState(0);
-  const [v, setV] = useState(emptyCandidate);
+  const [v, setV] = useState(() => ({ ...emptyCandidate, ai_course: '' }));
   const [errors, setErrors] = useState({});
   const [busy, setBusy] = useState(false);
 
@@ -41,8 +96,8 @@ export default function Register() {
   // Only the questions on the current screen are checked when Next is pressed.
   function problemsOn(index) {
     const found = {};
-    const all = candidateErrors(v);
-    for (const field of FIELD_GROUPS[index].fields) if (all[field]) found[field] = all[field];
+    const all = { ...candidateErrors(v), ...aiCourseErrors(v) };
+    for (const field of STEPS[index].fields) if (all[field]) found[field] = all[field];
     return found;
   }
 
@@ -74,7 +129,7 @@ export default function Register() {
       // The server found a problem (for example, the mobile number is already registered):
       // go back to the screen that has that question.
       const fields = err.fields || {};
-      const at = FIELD_GROUPS.findIndex((group) => group.fields.some((field) => fields[field]));
+      const at = STEPS.findIndex((group) => group.fields.some((field) => fields[field]));
       if (at >= 0) goTo(at);
       showErrors(fields, err.message);
     }
@@ -96,7 +151,7 @@ export default function Register() {
     );
   }
 
-  const group = FIELD_GROUPS[step];
+  const group = STEPS[step];
   const last = step === STEP_COUNT - 1;
 
   return (

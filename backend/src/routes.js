@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import {
   NO_ID,
   RESUME_DIR,
+  aiCourseLeads,
   applications,
   candidates,
   companies,
@@ -142,7 +143,7 @@ async function settingsOut() {
 // ───────────────────────── candidates ─────────────────────────
 
 const CANDIDATE_COLS = [
-  'full_name', 'mobile', 'email', 'gender', 'dob', 'city', 'qualification', 'specialization', 'college',
+  'full_name', 'mobile', 'email', 'gender', 'dob', 'pincode', 'city', 'qualification', 'specialization', 'college',
   'passing_year', 'percentage', 'experience_type', 'experience_years', 'last_company', 'last_role',
   'skills', 'languages', 'preferred_role',
 ];
@@ -163,6 +164,7 @@ function validateCandidate(body = {}) {
     email: clean(body.email, 120).toLowerCase(),
     gender: clean(body.gender, 10),
     dob: clean(body.dob, 10),
+    pincode: String(body.pincode ?? '').replace(/\D/g, '').slice(0, 6),
     city: clean(body.city, 60),
     qualification: clean(body.qualification, 80),
     specialization: clean(body.specialization, 80),
@@ -193,7 +195,9 @@ function validateCandidate(body = {}) {
     if (age < 15 || age > 70) errors.dob = 'Check your date of birth';
   }
 
+  if (v.pincode && !/^[1-9]\d{5}$/.test(v.pincode)) errors.pincode = 'Enter your 6-digit pincode';
   if (!v.city) errors.city = 'Enter your city or town';
+  if (!v.languages) errors.languages = 'Select at least one language';
   if (!v.qualification) errors.qualification = 'Select your highest qualification';
   if (!v.college) errors.college = 'Enter your college or institute';
 
@@ -521,6 +525,37 @@ router.get(
   }),
 );
 
+// Pincode → areas, district and state, from the India Post pincode service. Used to fill in
+// City / town on the registration form. Answers are kept for a day; the list rarely changes.
+const pincodeCache = new Map();
+router.get(
+  '/public/pincode/:pin',
+  wrap(async (req, res) => {
+    const pin = req.params.pin;
+    if (!/^[1-9]\d{5}$/.test(pin)) return res.status(400).json({ error: 'Enter a 6-digit pincode' });
+    const hit = pincodeCache.get(pin);
+    if (hit && hit.at > Date.now() - 86400000) return res.json(hit.data);
+    let list;
+    try {
+      const r = await fetch(`https://api.postalpincode.in/pincode/${pin}`, { signal: AbortSignal.timeout(6000) });
+      list = (await r.json())?.[0];
+    } catch {
+      return res.status(502).json({ error: 'Could not look up the pincode right now. Please type your city.' });
+    }
+    const offices = list?.Status === 'Success' ? list.PostOffice || [] : [];
+    if (!offices.length) return res.status(404).json({ error: 'This pincode was not found. Please check it.' });
+    const data = {
+      pincode: pin,
+      district: offices[0].District,
+      state: offices[0].State,
+      areas: [...new Set(offices.map((o) => o.Name))].sort(),
+    };
+    if (pincodeCache.size > 5000) pincodeCache.clear();
+    pincodeCache.set(pin, { at: Date.now(), data });
+    res.json(data);
+  }),
+);
+
 router.get(
   '/public/companies/:id',
   wrap(async (req, res) => {
@@ -568,6 +603,15 @@ router.post(
         return res.status(400).json({ error: 'This mobile number or email is already registered. Please log in.' });
       }
       throw err;
+    }
+    // Interested in the Government Certified AI Course: save their details in a separate list.
+    if (String(req.body.ai_course) === 'yes') {
+      const { login_key, resume_file, resume_name, id, created_at, ...details } = row;
+      await aiCourseLeads.updateOne(
+        { candidate_id: id },
+        { $setOnInsert: { candidate_id: id, ...details, created_at } },
+        { upsert: true },
+      );
     }
     res.status(201).json({ token: candidateToken(row), candidate: candidateOut(row) });
   }),
@@ -1287,6 +1331,7 @@ router.delete(
     if (!row) return res.status(404).json({ error: 'Candidate not found' });
     await candidates.deleteOne({ id: row.id });
     await applications.deleteMany({ candidate_id: row.id });
+    await aiCourseLeads.deleteOne({ candidate_id: row.id });
     removeResume(row.resume_file);
     dropCompanyCache();
     res.json({ ok: true });
@@ -1410,14 +1455,61 @@ router.get(
       'job-fair-candidates.xlsx',
       'Candidates',
       [
-        'Reg No', 'Name', 'Mobile', 'Email', 'Gender', 'Date of Birth', 'City', 'Qualification', 'Course / Stream',
+        'Reg No', 'Name', 'Mobile', 'Email', 'Gender', 'Date of Birth', 'Pincode', 'City', 'Qualification', 'Course / Stream',
         'College', 'Year of Passing', 'Percentage / CGPA', 'Experience', 'Last Company', 'Last Role', 'Skills',
         'Languages', 'Preferred Role', 'Resume', 'Companies Applied', 'Registered At',
       ],
       rows.map((r) => [
-        regNo(r.id), r.full_name, r.mobile, r.email, r.gender, r.dob, r.city, r.qualification, r.specialization,
+        regNo(r.id), r.full_name, r.mobile, r.email, r.gender, r.dob, r.pincode ?? '', r.city, r.qualification, r.specialization,
         r.college, r.passing_year, r.percentage, experienceText(r), r.last_company, r.last_role, r.skills,
         r.languages, r.preferred_role, r.resume_file ? 'Yes' : 'No', counts.get(r.id) ?? 0, localTime(r.created_at),
+      ]),
+    );
+  }),
+);
+
+// AI Course: candidates who said Yes to the Government Certified AI Course when registering.
+
+function aiLeadFilter(q) {
+  if (!q) return {};
+  const reg = /^jf-?0*(\d{1,9})$/i.exec(q);
+  if (reg) return { candidate_id: Number(reg[1]) };
+  const cols = ['full_name', 'mobile', 'email', 'qualification', 'specialization', 'city', 'pincode', 'college'];
+  return { $or: cols.map((c) => ({ [c]: containing(q) })) };
+}
+
+router.get(
+  '/admin/ai-course',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const filter = aiLeadFilter(clean(req.query.q, 80));
+    const { offset, limit } = pageOf(req.query);
+    const [total, rows] = await Promise.all([
+      aiCourseLeads.countDocuments(filter),
+      aiCourseLeads.find(filter, { ...NO_ID, sort: { candidate_id: -1 }, skip: offset, limit }).toArray(),
+    ]);
+    res.json({ total, rows: rows.map((r) => ({ ...r, reg_no: regNo(r.candidate_id) })) });
+  }),
+);
+
+router.get(
+  '/admin/export/ai-course',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const rows = await aiCourseLeads.find({}, { ...NO_ID, sort: { candidate_id: 1 } }).toArray();
+    sendSheet(
+      res,
+      'ai-course-interested.xlsx',
+      'AI Course',
+      [
+        'Reg No', 'Name', 'Mobile', 'Email', 'Gender', 'Date of Birth', 'Pincode', 'City', 'Qualification',
+        'Course / Stream', 'College', 'Year of Passing', 'Percentage / CGPA', 'Experience', 'Last Company', 'Last Role',
+        'Skills', 'Languages', 'Preferred Role', 'Signed Up At',
+      ],
+      rows.map((r) => [
+        regNo(r.candidate_id), r.full_name, r.mobile, r.email, r.gender, r.dob, r.pincode ?? '', r.city, r.qualification,
+        r.specialization, r.college, r.passing_year, r.percentage, experienceText(r), r.last_company, r.last_role,
+        r.skills, r.languages, r.preferred_role, localTime(r.created_at),
       ]),
     );
   }),
@@ -1513,7 +1605,7 @@ router.post(
     if ((await getSettings()).demo_data !== '1') {
       return res.status(400).json({ error: 'There is no sample data to clear' });
     }
-    await Promise.all([applications.deleteMany({}), candidates.deleteMany({}), companies.deleteMany({})]);
+    await Promise.all([applications.deleteMany({}), candidates.deleteMany({}), companies.deleteMany({}), aiCourseLeads.deleteMany({})]);
     await resetIds(['applications', 'candidates', 'companies']);
     await setSetting('demo_data', '0');
     for (const file of fs.readdirSync(RESUME_DIR)) fs.rmSync(path.join(RESUME_DIR, file), { force: true });

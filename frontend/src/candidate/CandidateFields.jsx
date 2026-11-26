@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
-import { GENDERS, QUALIFICATIONS, QUALIFICATION_GROUPS } from '../lib.jsx';
-import { Card, Choice, Field, Input, Select } from '../ui.jsx';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, LoaderCircle, MapPin, Plus } from 'lucide-react';
+import { GENDERS, QUALIFICATIONS, QUALIFICATION_GROUPS, api } from '../lib.jsx';
+import { Card, Choice, Field, Input, Select, cx } from '../ui.jsx';
 
 export const emptyCandidate = {
   full_name: '',
@@ -8,6 +9,7 @@ export const emptyCandidate = {
   email: '',
   gender: '',
   dob: '',
+  pincode: '',
   city: '',
   qualification: '',
   specialization: '',
@@ -67,7 +69,9 @@ export function candidateErrors(v) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.email.trim())) e.email = 'Enter a valid email address';
   if (!v.gender) e.gender = 'Select your gender';
   if (!v.dob) e.dob = 'Enter your date of birth';
+  if (!/^[1-9]\d{5}$/.test(v.pincode || '')) e.pincode = 'Enter your 6-digit pincode';
   if (!v.city.trim()) e.city = 'Enter your city or town';
+  if (!(v.languages || '').trim()) e.languages = 'Select at least one language';
   if (!v.qualification) e.qualification = 'Select your highest qualification';
   if (!v.college.trim()) e.college = 'Enter your college or institute';
   if (!v.passing_year) e.passing_year = 'Select the year of passing';
@@ -88,6 +92,177 @@ export function Section({ title, sub, children }) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">{children}</div>
     </Card>
+  );
+}
+
+// Compact: three lists share one field's width.
+const DOB_SELECT = 'px-2.5! pr-1! text-[15px]!';
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Date of birth as three lists: Year, Month (Jan, Feb ...), Day. The saved value is still
+// "YYYY-MM-DD", and only once all three are picked; until then it is empty.
+function DateOfBirth({ value, onChange, error, max }) {
+  const split = (d) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+    return m ? { y: m[1], m: String(+m[2]), d: String(+m[3]) } : { y: '', m: '', d: '' };
+  };
+  const [parts, setParts] = useState(() => split(value));
+  // A saved date loaded later (for example on "Edit my details").
+  useEffect(() => {
+    if (value) setParts(split(value));
+  }, [value]);
+
+  const [maxY, maxM, maxD] = max.split('-').map(Number);
+  const years = useMemo(() => Array.from({ length: maxY - 1950 + 1 }, (_, i) => String(maxY - i)), [maxY]);
+  const y = +parts.y;
+  const months = MONTHS.map((name, i) => ({ name, n: i + 1 })).filter((mo) => !y || y < maxY || mo.n <= maxM);
+  const inMonth = parts.m ? new Date(y || 2000, +parts.m, 0).getDate() : 31; // 2000 is a leap year, so 29 Feb stays possible
+  const lastDay = y === maxY && +parts.m === maxM ? Math.min(inMonth, maxD) : inMonth;
+  const days = Array.from({ length: lastDay }, (_, i) => String(i + 1));
+
+  function pick(key, val) {
+    const next = { ...parts, [key]: val };
+    // Drop a day or month that no longer exists (31 Feb, or a month after the latest allowed date).
+    const ny = +next.y;
+    if (next.m && ny === maxY && +next.m > maxM) next.m = '';
+    if (next.d && next.m) {
+      const nd = new Date(ny || 2000, +next.m, 0).getDate();
+      const cap = ny === maxY && +next.m === maxM ? Math.min(nd, maxD) : nd;
+      if (+next.d > cap) next.d = '';
+    }
+    setParts(next);
+    const full = next.y && next.m && next.d ? `${next.y}-${next.m.padStart(2, '0')}-${next.d.padStart(2, '0')}` : '';
+    if (full !== value) onChange(full);
+  }
+
+  return (
+    <div className="grid grid-cols-[1.2fr_1fr_0.9fr] gap-1.5">
+      <Select aria-label="Year of birth" className={DOB_SELECT} value={parts.y} onChange={(e) => pick('y', e.target.value)} error={error && !parts.y} autoComplete="bday-year">
+        <option value="">Year</option>
+        {years.map((yr) => (
+          <option key={yr}>{yr}</option>
+        ))}
+      </Select>
+      <Select aria-label="Month of birth" className={DOB_SELECT} value={parts.m} onChange={(e) => pick('m', e.target.value)} error={error && !parts.m} autoComplete="bday-month">
+        <option value="">Month</option>
+        {months.map((mo) => (
+          <option key={mo.n} value={String(mo.n)}>
+            {mo.name}
+          </option>
+        ))}
+      </Select>
+      <Select aria-label="Day of birth" className={DOB_SELECT} value={parts.d} onChange={(e) => pick('d', e.target.value)} error={error && !parts.d} autoComplete="bday-day">
+        <option value="">Day</option>
+        {days.map((dd) => (
+          <option key={dd}>{dd}</option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+
+// Pincode first; City / town is then filled in from it (India Post data, through our server).
+// The candidate can tap their area to make it exact, or type over it.
+function PincodeCity({ v, set, errors }) {
+  const [look, setLook] = useState({ pin: '', busy: false, data: null, error: '' });
+  const [autoCity, setAutoCity] = useState('');
+
+  useEffect(() => {
+    const pin = v.pincode;
+    if (!/^[1-9]\d{5}$/.test(pin || '') || look.pin === pin) return;
+    let gone = false;
+    setLook({ pin, busy: true, data: null, error: '' });
+    api(`/public/pincode/${pin}`)
+      .then((data) => {
+        if (gone) return;
+        setLook({ pin, busy: false, data, error: '' });
+        // Fill City / town unless the candidate typed their own.
+        if (!v.city.trim() || v.city === autoCity) {
+          set('city', data.district);
+          setAutoCity(data.district);
+        }
+      })
+      .catch((err) => !gone && setLook({ pin, busy: false, data: null, error: err.message }));
+    return () => {
+      gone = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.pincode]);
+
+  const found = look.data && look.pin === v.pincode ? look.data : null;
+  const pickArea = (area) => {
+    const city = `${area}, ${found.district}`;
+    set('city', city);
+    setAutoCity(city);
+  };
+
+  return (
+    <>
+      <Field label="Pincode" required error={errors.pincode || (look.pin === v.pincode && look.error) || undefined}>
+        <div className="relative">
+          <Input
+            type="tel"
+            inputMode="numeric"
+            pattern="[0-9]{6}"
+            value={v.pincode}
+            onChange={(e) => set('pincode', e.target.value.replace(/\D/g, '').slice(0, 6))}
+            error={errors.pincode}
+            autoComplete="postal-code"
+            placeholder="6-digit pincode"
+          />
+          <span className="pointer-events-none absolute inset-y-0 right-4 grid place-items-center" aria-live="polite">
+            {look.busy && look.pin === v.pincode ? (
+              <LoaderCircle className="size-5 animate-spin text-slate-400" aria-label="Finding your area" />
+            ) : found ? (
+              <Check className="size-5 text-emerald-600" aria-label="Pincode found" />
+            ) : null}
+          </span>
+        </div>
+      </Field>
+      <Field label="City / town" required error={errors.city} hint={found ? `${found.district} district, ${found.state}` : 'Filled in from your pincode'}>
+        <Input value={v.city} onChange={(e) => set('city', e.target.value)} error={errors.city} autoComplete="address-level2" placeholder="e.g. Kaup, Udupi" maxLength={60} />
+      </Field>
+      {/* A few areas: tap one. Many areas: a dropdown, so the form stays tidy. */}
+      {found && found.areas.length > 0 && found.areas.length <= 6 && (
+        <div className="sm:col-span-2">
+          <p className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700">
+            <MapPin className="size-4 text-slate-400" aria-hidden="true" /> Tap your area
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {found.areas.map((area) => {
+              const active = v.city === `${area}, ${found.district}`;
+              return (
+                <button
+                  key={area}
+                  type="button"
+                  onClick={() => pickArea(area)}
+                  aria-pressed={active}
+                  className={cx(
+                    'min-h-10 rounded-full border px-3.5 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600',
+                    active ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+                  )}
+                >
+                  {area}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {found && found.areas.length > 6 && (
+        <Field label="Your area" hint={`${found.areas.length} areas under ${found.pincode}`} className="sm:col-span-2">
+          <Select
+            value={found.areas.find((area) => v.city === `${area}, ${found.district}`) || ''}
+            onChange={(e) => e.target.value && pickArea(e.target.value)}
+          >
+            <option value="">Select your area</option>
+            {found.areas.map((area) => (
+              <option key={area}>{area}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
+    </>
   );
 }
 
@@ -128,12 +303,10 @@ function PersonalFields({ v, set, errors }) {
           ))}
         </div>
       </Field>
-      <Field label="Date of birth" required error={errors.dob}>
-        <Input type="date" value={v.dob} onChange={on('dob')} error={errors.dob} max={maxDob} min="1950-01-01" autoComplete="bday" />
+      <Field as="div" label="Date of birth" required error={errors.dob}>
+        <DateOfBirth value={v.dob} onChange={(val) => set('dob', val)} error={errors.dob} max={maxDob} />
       </Field>
-      <Field label="City / town" required error={errors.city} className="sm:col-span-2">
-        <Input value={v.city} onChange={on('city')} error={errors.city} autoComplete="address-level2" placeholder="e.g. Kaup, Udupi" maxLength={60} />
-      </Field>
+      <PincodeCity v={v} set={set} errors={errors} />
     </>
   );
 }
@@ -183,6 +356,115 @@ function EducationFields({ v, set, errors }) {
   );
 }
 
+// Common languages around Udupi first, then other Indian languages. Saved as "Kannada, English".
+const LANGUAGES = [
+  'Kannada', 'English', 'Hindi', 'Tulu', 'Konkani', 'Malayalam', 'Beary', 'Tamil', 'Telugu', 'Marathi',
+  'Urdu', 'Bengali', 'Gujarati', 'Punjabi', 'Odia', 'Arabic',
+];
+
+// A dropdown with a tick box per language; the button shows what is picked.
+function LanguagePicker({ value, onChange }) {
+  const picked = (value || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const has = (lang) => picked.some((p) => p.toLowerCase() === lang.toLowerCase());
+  // Languages typed in earlier (or added below) that are not in the list.
+  const extra = picked.filter((p) => !LANGUAGES.some((l) => l.toLowerCase() === p.toLowerCase()));
+  const [open, setOpen] = useState(false);
+  const [other, setOther] = useState('');
+  const box = useRef(null);
+
+  // Close on a tap outside, or on Escape.
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => !box.current?.contains(e.target) && setOpen(false);
+    const esc = (e) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+
+  const toggle = (lang) => onChange((has(lang) ? picked.filter((p) => p.toLowerCase() !== lang.toLowerCase()) : [...picked, lang]).join(', '));
+  function addOther() {
+    const name = other.trim().replace(/,/g, ' ').slice(0, 30);
+    if (name && !has(name)) onChange([...picked, name].join(', ').slice(0, 120));
+    setOther('');
+  }
+
+  const summary = picked.length === 0 ? '' : picked.length <= 3 ? picked.join(', ') : `${picked.slice(0, 2).join(', ')} +${picked.length - 2} more`;
+
+  return (
+    <div ref={box} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={cx(
+          'flex min-h-13 w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border bg-white px-4 py-3 text-left text-base outline-none transition focus-visible:border-blue-600 focus-visible:ring-4 focus-visible:ring-blue-100',
+          open ? 'border-blue-600 ring-4 ring-blue-100' : 'border-slate-200',
+        )}
+      >
+        <span className={cx('truncate', summary ? 'text-slate-900' : 'text-slate-400')}>{summary || 'Select languages'}</span>
+        <span className="flex shrink-0 items-center gap-2">
+          {picked.length > 0 && <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs font-bold text-white">{picked.length}</span>}
+          <ChevronDown className={cx('size-5 text-slate-500 transition-transform', open && 'rotate-180')} aria-hidden="true" />
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute inset-x-0 top-full z-20 mt-2 overflow-hidden rounded-2xl bg-white shadow-xl shadow-slate-900/10 ring-1 ring-slate-900/10">
+          <div role="listbox" aria-multiselectable="true" aria-label="Languages" className="max-h-64 overflow-y-auto overscroll-contain p-1.5">
+            {[...LANGUAGES, ...extra].map((lang) => {
+              const on = has(lang);
+              return (
+                <label
+                  key={lang}
+                  className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl px-3 text-[15px] font-semibold text-slate-800 hover:bg-slate-50 has-focus-visible:bg-blue-50"
+                >
+                  <input type="checkbox" checked={on} onChange={() => toggle(lang)} className="sr-only" />
+                  <span className={cx('grid size-5 shrink-0 place-items-center rounded-md border-2 transition', on ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white')}>
+                    {on && <Check className="size-3.5" strokeWidth={3.5} aria-hidden="true" />}
+                  </span>
+                  {lang}
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex gap-2 border-t border-slate-100 p-2">
+            <input
+              value={other}
+              onChange={(e) => setOther(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addOther();
+                }
+              }}
+              placeholder="Other language"
+              maxLength={30}
+              aria-label="Other language"
+              className="min-h-11 w-full min-w-0 rounded-xl border border-slate-200 px-3 text-base outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+            />
+            <button
+              type="button"
+              onClick={addOther}
+              disabled={!other.trim()}
+              className="inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Plus className="size-4" aria-hidden="true" /> Add
+            </button>
+            <button type="button" onClick={() => setOpen(false)} className="inline-flex min-h-11 shrink-0 cursor-pointer items-center rounded-xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-700">
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExperienceFields({ v, set, errors }) {
   const on = (key) => (e) => set(key, e.target.value);
   const experienced = v.experience_type === 'experienced';
@@ -214,8 +496,8 @@ function ExperienceFields({ v, set, errors }) {
       <Field label="Key skills" error={errors.skills} hint="Optional. Separate with commas" className="sm:col-span-2">
         <Input value={v.skills} onChange={on('skills')} placeholder="e.g. Tally, MS Excel, Communication" maxLength={300} />
       </Field>
-      <Field label="Languages known" error={errors.languages} hint="Optional">
-        <Input value={v.languages} onChange={on('languages')} placeholder="e.g. Kannada, English, Hindi" maxLength={120} />
+      <Field as="div" label="Languages known" required error={errors.languages} hint="Tick all you can speak">
+        <LanguagePicker value={v.languages} onChange={(val) => set('languages', val)} />
       </Field>
       <Field label="Job role you are looking for" error={errors.preferred_role} hint="Optional">
         <Input value={v.preferred_role} onChange={on('preferred_role')} placeholder="e.g. Accountant, Sales" maxLength={120} />
@@ -227,7 +509,7 @@ function ExperienceFields({ v, set, errors }) {
 // The candidate's details in three small groups. Registration shows one group per screen;
 // "Edit my details" shows all three, one below the other.
 export const FIELD_GROUPS = [
-  { title: 'Your details', sub: 'Tell us who you are', fields: ['full_name', 'mobile', 'email', 'gender', 'dob', 'city'], Fields: PersonalFields },
+  { title: 'Your details', sub: 'Tell us who you are', fields: ['full_name', 'mobile', 'email', 'gender', 'dob', 'pincode', 'city'], Fields: PersonalFields },
   { title: 'Education', sub: 'Your highest qualification', fields: ['qualification', 'specialization', 'college', 'passing_year', 'percentage'], Fields: EducationFields },
   {
     title: 'Experience and skills',

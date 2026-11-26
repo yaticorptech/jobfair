@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Building2, ClipboardList, LogOut, ScanQrCode, User } from 'lucide-react';
 import { api, setToken, useInfo } from '../lib.jsx';
@@ -56,8 +56,11 @@ export default function Dashboard() {
     };
   }, [loadCompanies, refreshInfo]);
 
+  // Shown once only: React runs this twice in development, before the state is cleared.
+  const welcomed = useRef(false);
   useEffect(() => {
-    if (location.state?.welcome) {
+    if (location.state?.welcome && !welcomed.current) {
+      welcomed.current = true;
       toast('Registration successful. Next time, log in with your mobile number.');
       navigate(location.pathname, { replace: true, state: null });
     }
