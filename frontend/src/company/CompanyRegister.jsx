@@ -17,9 +17,6 @@ export default function CompanyRegister() {
   const [error, setError] = useState(null);
   const [name, setName] = useState('');
   const [industry, setIndustry] = useState('');
-  const [deskNo, setDeskNo] = useState('');
-  const [floor, setFloor] = useState('');
-  const [deskError, setDeskError] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [taken, setTaken] = useState(false); // a company with this name is registered already
   const [failed, setFailed] = useState('');
@@ -50,15 +47,14 @@ export default function CompanyRegister() {
     setBusy(true);
     setFailed('');
     try {
-      const data = await api(`/public/company-register/${encodeURIComponent(code)}`, { method: 'POST', body: { name, industry, room_no: deskNo, location: floor } });
+      const data = await api(`/public/company-register/${encodeURIComponent(code)}`, { method: 'POST', body: { name, industry } });
       setToken('recruiter', data.token);
       navigate('/company?welcome=1', { replace: true });
     } catch (err) {
       if (err.fields?.name) {
         setFieldError(err.fields.name);
         setTaken(err.status === 409);
-      } else if (err.fields?.room_no) setDeskError(err.fields.room_no);
-      else setFailed(err.message);
+      } else setFailed(err.message);
       setBusy(false);
       requestAnimationFrame(() => document.querySelector('[data-error]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     }
@@ -119,26 +115,7 @@ export default function CompanyRegister() {
               <Field label="Industry" hint="Optional">
                 <IndustrySelect value={industry} onChange={setIndustry} />
               </Field>
-              {/* For a company that is already at its desk. Others add these later, from the dashboard. */}
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Interview desk number" error={deskError} hint={deskError ? undefined : 'The number on the poster at your desk'}>
-                  <Input
-                    value={deskNo}
-                    onChange={(e) => {
-                      setDeskNo(e.target.value);
-                      setDeskError('');
-                    }}
-                    error={deskError}
-                    inputMode="numeric"
-                    maxLength={20}
-                    placeholder="e.g. 12"
-                  />
-                </Field>
-                <Field label="Floor number" hint="e.g. 1, or Ground floor">
-                  <Input value={floor} onChange={(e) => setFloor(e.target.value)} maxLength={80} placeholder="e.g. 1" />
-                </Field>
-              </div>
-              <p className="-mt-1 text-sm text-slate-500">Not at your desk yet? Leave these two empty. You can add them later, or scan the QR code at your desk.</p>
+              <p className="-mt-1 text-sm text-slate-500">Next you scan the QR code on the poster at your interview desk. You do this once; the desk is then linked to your company.</p>
               <FormError>{failed}</FormError>
               <Button type="submit" size="lg" loading={busy} className="w-full">
                 Register <ArrowRight className="size-5" aria-hidden="true" />

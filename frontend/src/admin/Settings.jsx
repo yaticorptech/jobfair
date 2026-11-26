@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, useInfo } from '../lib.jsx';
-import { Button, Card, ErrorNote, Field, Input, PageLoader, Textarea, Toggle, useToast } from '../ui.jsx';
+import { Button, Card, ErrorNote, Field, Input, PageLoader, Textarea, useToast } from '../ui.jsx';
 import { PageTitle } from './shared.jsx';
 
 export default function Settings() {
@@ -85,19 +85,8 @@ export default function Settings() {
         </Card>
 
         <Card className="grid gap-5 p-5 sm:p-6">
-          <h2 className="font-bold text-slate-900">Controls</h2>
-          <Toggle
-            checked={v.registration_open}
-            onChange={(registration_open) => setV((old) => ({ ...old, registration_open }))}
-            label="Registration is open"
-            hint="Turn off to stop new candidates from registering. Registered candidates can still log in."
-          />
-          <Toggle
-            checked={v.applications_open}
-            onChange={(applications_open) => setV((old) => ({ ...old, applications_open }))}
-            label="Candidates can apply to companies"
-            hint="Turn off when the fair is over, or keep it off until the company list is final."
-          />
+          <h2 className="font-bold text-slate-900">Applications</h2>
+          <p className="-mt-3 text-sm text-slate-500">The on/off switches for registration, applications and interviews are on the Desk control page.</p>
           <Field label="Maximum companies one candidate can apply to" error={errors.max_applications} hint="0 means no limit." className="max-w-xs">
             <Input type="number" min="0" max="500" inputMode="numeric" value={v.max_applications} onChange={on('max_applications')} error={errors.max_applications} />
           </Field>

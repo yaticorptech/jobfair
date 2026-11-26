@@ -75,7 +75,7 @@ export default function Applications({ companies, reload }) {
                 )}
 
                 {app.status === 'applied' && app.queue ? (
-                  <QueueNote app={app} nowServing={c.now_serving} nowServingStarted={c.now_serving_started} nowServingDone={c.now_serving_done} room={c.room_no} className="mt-3" />
+                  <QueueNote app={app} nowServing={c.now_serving} nowServingStarted={c.now_serving_started} nowServingDone={c.now_serving_done} onBreak={c.on_break} room={c.room_no} className="mt-3" />
                 ) : (
                   <p className={cx('mt-3 flex items-start gap-2 rounded-2xl px-3.5 py-3 text-sm font-semibold', app.status === 'selected' ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-50 text-slate-600')}>
                     {app.status === 'selected' && <PartyPopper className="mt-0.5 size-4 shrink-0" aria-hidden="true" />}
@@ -114,7 +114,7 @@ export default function Applications({ companies, reload }) {
       >
         <p className="text-slate-600">
           Your application to <span className="font-bold text-slate-900">{withdrawing?.name}</span> will be removed and you will lose token{' '}
-          <span className="font-bold text-slate-900">{withdrawing?.application.token_no}</span>. You can apply again, but you will get a new token at the end of the queue.
+          <span className="font-bold text-slate-900">{withdrawing?.application.token_no}</span>. You will not be able to apply to this company again.
         </p>
       </Modal>
     </div>

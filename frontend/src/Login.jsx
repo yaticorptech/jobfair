@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { UserRound } from 'lucide-react';
 import { api, getToken, nextPath, setToken, useInfo, withNext } from './lib.jsx';
 import { Button, Credit, Field, Input, TopBar } from './ui.jsx';
+import { askForAlerts } from './push.js';
 import { mobileProblem, tenDigits } from './candidate/CandidateFields.jsx';
 
 // The frame shared by the three login screens (candidate, company, organiser).
@@ -58,6 +59,7 @@ export default function Login() {
     try {
       const data = await api('/auth/login', { method: 'POST', body: { mobile } });
       setToken('candidate', data.token);
+      askForAlerts();
       navigate(next || '/dashboard', { replace: true });
     } catch (err) {
       setError(err.message);

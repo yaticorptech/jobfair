@@ -43,6 +43,7 @@ const person = (overrides = {}) => ({
   passing_year: '2025',
   percentage: '72%',
   experience_type: 'fresher',
+  languages: 'English, Kannada',
   skills: 'Tally, Excel',
   ...overrides,
 });
@@ -56,13 +57,19 @@ function toForm(fields, file) {
 
 // Organisers add a company with its name and details only. A desk number given here is then set
 // the way the company itself does it: from its dashboard, with its access code.
+// Candidates can only apply to a company that has its desk, so every company gets one unless the
+// test asks for none (noDesk).
 async function addCompany(body) {
-  const { room_no, location, ...details } = body;
+  const { room_no, location, noDesk, ...details } = body;
   const res = await call('POST', '/admin/companies', { token: adminAuth, body: body.name ? details : body });
   assert.equal(res.status, 201);
-  if (!body.name || !(room_no || location)) return res.data;
+  if (!body.name || noDesk) return res.data;
+  // A company gets its desk by scanning the desk QR code there (once): the organisers add that
+  // desk QR code, and the company scans it.
   const login = await call('POST', '/recruiter/login', { body: { code: res.data.access_code } });
-  const placed = await call('PUT', '/recruiter/company', { token: login.data.token, body: { room_no, location } });
+  let desk = (await call('GET', '/admin/companies', { token: adminAuth })).data.find((c) => c.name === '' && c.room_no === room_no && !c.holder);
+  if (!desk) desk = (await call('POST', '/admin/companies', { token: adminAuth, body: { name: '', room_no: room_no || `T${res.data.id}`, location } })).data;
+  const placed = await call('POST', '/recruiter/desk', { token: login.data.token, body: { qr: `https://fair.example/c/${desk.id}`, location } });
   assert.equal(placed.status, 200, placed.data.error);
   return { ...res.data, ...placed.data.company };
 }
@@ -223,9 +230,10 @@ test('full candidate journey: register, see companies and rooms, apply, get a to
   assert.equal((await call('DELETE', `/applications/${applied.data.id}`, { token: second.data.token })).status, 404);
   assert.equal((await call('DELETE', `/applications/${secondApp.data.id}`, { token: second.data.token })).status, 200);
 
-  // A withdrawn token number is never given out again
+  // One application per company, ever: after withdrawing, the same company cannot be applied to again
   const again = await call('POST', `/companies/${company.id}/apply`, { token: second.data.token, body: { role: 'Sales Executive' } });
-  assert.equal(again.data.token_no, 3);
+  assert.equal(again.status, 409);
+  assert.match(again.data.error, /withdrew/);
 
   // Resume download: own resume and admin copy
   const own = await call('GET', '/me/resume', { token });
@@ -324,31 +332,41 @@ test('settings: closing registration and limiting applications', async () => {
   const current = (await call('GET', '/admin/settings', { token: adminAuth })).data;
   const save = (changes) => call('PUT', '/admin/settings', { token: adminAuth, body: { ...current, ...changes } });
 
+  const flip = (key, on) => call('PUT', '/admin/controls', { token: adminAuth, body: { key, on } });
+  // Saving the settings form leaves the switches alone; they are flipped on Desk control
   assert.equal((await save({ registration_open: false })).status, 200);
+  assert.equal((await call('GET', '/public/switches')).data.registration_open, true);
+  assert.equal((await flip('registration_open', false)).status, 200);
   const closed = await call('POST', '/auth/register', { form: toForm(person({ mobile: '9845022222', email: 'b@example.com' })) });
   assert.equal(closed.status, 403);
 
-  await save({ registration_open: true, max_applications: 1 });
+  await flip('registration_open', true);
+  await save({ max_applications: 1 });
   const reg = await call('POST', '/auth/register', { form: toForm(person({ mobile: '9845022222', email: 'b@example.com' })) });
   assert.equal(reg.status, 201);
-  const list = (await call('GET', '/companies', { token: reg.data.token })).data.filter((c) => c.roles.length <= 1);
-  assert.equal((await call('POST', `/companies/${list[0].id}/apply`, { token: reg.data.token, body: {} })).status, 201);
-  const over = await call('POST', `/companies/${list[1].id}/apply`, { token: reg.data.token, body: {} });
+  // Applications open only at companies that have their desk
+  const list = (await call('GET', '/companies', { token: reg.data.token })).data.filter((c) => c.room_no && c.active !== false);
+  const pick = (c) => ({ role: c.roles[0] ?? '' });
+  assert.equal((await call('POST', `/companies/${list[0].id}/apply`, { token: reg.data.token, body: pick(list[0]) })).status, 201);
+  const over = await call('POST', `/companies/${list[1].id}/apply`, { token: reg.data.token, body: pick(list[1]) });
   assert.equal(over.status, 400);
   assert.match(over.data.error, /maximum of 1/);
 
-  await save({ max_applications: 0, applications_open: false });
-  assert.equal((await call('POST', `/companies/${list[1].id}/apply`, { token: reg.data.token, body: {} })).status, 403);
-  await save({ applications_open: true });
+  await save({ max_applications: 0 });
+  await flip('applications_open', false);
+  assert.equal((await call('POST', `/companies/${list[1].id}/apply`, { token: reg.data.token, body: pick(list[1]) })).status, 403);
+  await flip('applications_open', true);
   assert.equal((await save({ fair_name: '' })).status, 400);
 });
 
 test('deleting a candidate removes their applications', async () => {
   const before = (await call('GET', '/admin/overview', { token: adminAuth })).data.totals;
+  const theirs = (await call('GET', '/admin/candidates/2', { token: adminAuth })).data.applications;
+  const count = Array.isArray(theirs) ? theirs.length : Number(theirs) || 0;
   assert.equal((await call('DELETE', '/admin/candidates/2', { token: adminAuth })).status, 200);
   const afterTotals = (await call('GET', '/admin/overview', { token: adminAuth })).data.totals;
   assert.equal(afterTotals.candidates, before.candidates - 1);
-  assert.equal(afterTotals.applications, before.applications - 1);
+  assert.equal(afterTotals.applications, before.applications - count);
   assert.equal((await call('POST', '/admin/demo/clear', { token: adminAuth })).status, 400);
 });
 
@@ -481,13 +499,10 @@ test('a company fills in its own details and job openings', async () => {
   assert.equal((await save({ about: 'x' }, null)).status, 401);
   assert.equal((await save({ about: 'x' }, adminAuth)).status, 401);
 
-  // The company can type its own desk number and floor. No desk QR codes are in use yet, so the
-  // number is simply kept. A bare floor number is shown as "Floor 2".
-  const placed = (await save({ room_no: 'S9', location: '2' })).data.company;
-  assert.deepEqual([placed.room_no, placed.location, placed.desk_id], ['S9', 'Floor 2', null]);
+  // The company has its desk (scanned once); it can change the floor shown. A bare floor number is shown as "Floor 2".
+  assert.equal((await save({ location: '2' })).data.company.location, 'Floor 2');
   assert.equal((await call('GET', `/public/companies/${company.id}`)).data.location, 'Floor 2');
   assert.equal((await save({ location: 'Block A, 1st floor' })).data.company.location, 'Block A, 1st floor');
-  assert.equal((await save({ room_no: 'S1', location: '' })).data.company.room_no, 'S1');
 
   // Jobs the organisers typed as plain titles come with empty details, ready to be filled in
   const me = (await call('GET', '/recruiter/me', { token: recruiter })).data.company;
@@ -639,11 +654,14 @@ test('desk QR codes go anywhere: a company registers, then scans the one at its 
   assert.match(twice.data.error, /already registered/);
   assert.equal((await call('POST', '/recruiter/login', { body: { code: reg.data.access_code } })).status, 200);
 
-  // It is in the candidates' list straight away, with no desk yet, and adds a job opening
+  // It is in the candidates' list straight away, with no desk yet. Until it scans its desk QR code
+  // it can do nothing else: not even add its jobs.
   assert.equal((await page(first.id)).room_no, '');
   assert.equal((await call('GET', '/recruiter/me', { token: recruiter })).data.access_code, reg.data.access_code);
-  assert.equal((await call('PUT', '/recruiter/company', { token: recruiter, body: { jobs: [{ title: 'Cashier', openings: 4, ctc: '₹14,000 per month', eligibility: 'PUC', location: 'Kaup' }] } })).status, 200);
-  assert.equal((await call('PUT', '/recruiter/company', { token: recruiter, body: { name: 'Renamed' } })).data.company.name, 'Desk First Pvt Ltd');
+  assert.equal((await call('GET', '/recruiter/me', { token: recruiter })).data.at_desk, false);
+  const blocked = await call('PUT', '/recruiter/company', { token: recruiter, body: { jobs: [{ title: 'Cashier' }] } });
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.data.code, 'scan_desk');
 
   // The company scans the QR code on the poster at its desk
   const activate = (body, token = recruiter) => call('POST', '/recruiter/desk', { token, body });
@@ -658,6 +676,12 @@ test('desk QR codes go anywhere: a company registers, then scans the one at its 
   assert.equal(mine.data.company.room_no, '501');
   assert.equal(mine.data.company.location, 'Hall B');
   assert.equal(mine.data.company.desk_id, desk.id);
+  // Now it adds a job opening (its name stays the organisers')
+  assert.equal((await call('PUT', '/recruiter/company', { token: recruiter, body: { jobs: [{ title: 'Cashier', openings: 4, ctc: '₹14,000 per month', eligibility: 'PUC', location: 'Kaup' }] } })).status, 200);
+  assert.equal((await call('PUT', '/recruiter/company', { token: recruiter, body: { name: 'Renamed' } })).data.company.name, 'Desk First Pvt Ltd');
+  // A later login opens the dashboard without scanning again
+  const later = (await call('POST', '/recruiter/login', { body: { code: reg.data.access_code } })).data.token;
+  assert.equal((await call('GET', '/recruiter/me', { token: later })).data.at_desk, true);
 
   // Candidates who scan that poster now see this company, and can apply from there
   const seen = await page(desk.id);
@@ -742,21 +766,22 @@ test('desk QR codes go anywhere: a company registers, then scans the one at its 
   const excel = (await adminList()).find((c) => c.name === 'From Excel Ltd');
   assert.deepEqual([excel.room_no, excel.desk_id], ['', null]);
 
-  // A company can also type its desk number and floor itself: when it registers, in its details,
-  // or in place of scanning. Typing the number on a desk poster is the same as scanning it.
+  // A new company gets its desk only by scanning the desk QR code there: a desk number typed when
+  // registering is ignored, and nothing else opens until it scans. After that it can move desks.
   assert.equal((await call('POST', '/admin/desks', { token: adminAuth, body: { from: 701, to: 703 } })).data.added, 3);
   const d701 = await deskAt('701');
   const d702 = await deskAt('702');
   const typedReg = await call('POST', `/public/company-register/${link}`, { body: { name: 'Typed Desk Co', room_no: '701', location: '1' } });
   assert.equal(typedReg.status, 201);
-  assert.deepEqual([typedReg.data.company.room_no, typedReg.data.company.location, typedReg.data.company.desk_id], ['701', 'Floor 1', d701.id]);
+  assert.deepEqual([typedReg.data.company.room_no, typedReg.data.company.desk_id], ['', null]);
+  assert.equal((await call('PUT', '/recruiter/company', { token: typedReg.data.token, body: { location: '1' } })).status, 403);
+  const scanned = await call('POST', '/recruiter/desk', { token: typedReg.data.token, body: { qr: qrOf(d701), location: '1' } });
+  assert.deepEqual([scanned.data.company.room_no, scanned.data.company.location, scanned.data.company.desk_id], ['701', 'Floor 1', d701.id]);
   assert.equal((await page(d701.id)).name, 'Typed Desk Co');
-  // A desk that is taken, or does not exist, is refused, and that company is not registered
-  const lateReg = await call('POST', `/public/company-register/${link}`, { body: { name: 'Late Co', room_no: '701' } });
-  assert.equal(lateReg.status, 400);
-  assert.match(lateReg.data.fields.room_no, /Desk 701 is already activated by Typed Desk Co/);
-  assert.match((await call('POST', `/public/company-register/${link}`, { body: { name: 'Late Co', room_no: '999' } })).data.fields.room_no, /There is no desk 999/);
-  assert.ok(!(await adminList()).some((c) => c.name === 'Late Co'));
+  // Another company scanning a desk that is taken is refused
+  const lateReg = await call('POST', `/public/company-register/${link}`, { body: { name: 'Late Co' } });
+  assert.equal(lateReg.status, 201);
+  assert.match((await call('POST', '/recruiter/desk', { token: lateReg.data.token, body: { qr: qrOf(d701) } })).data.error, /Desk 701 is already activated by Typed Desk Co/);
   // In its details: another desk with its floor, only the floor, a taken desk, a desk that is not there, no desk
   const details = (body) => call('PUT', '/recruiter/company', { token: typedReg.data.token, body });
   const movedCo = (await details({ room_no: '702', location: 'Second floor, Block B' })).data.company;

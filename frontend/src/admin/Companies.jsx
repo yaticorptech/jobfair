@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Copy, Download, FileSpreadsheet, Grid2x2Plus, KeyRound, Pencil, Plus, QrCode, RefreshCw, Trash2, Unlink } from 'lucide-react';
 import { api, download, formatCode, useInfo } from '../lib.jsx';
-import { Button, ErrorNote, Field, Input, Modal, PageLoader, Pager, Textarea, Toggle, cx, rangeLabel, usePageSize, usePaging, useToast } from '../ui.jsx';
+import { AccessCode, Button, ErrorNote, Field, Input, Modal, PageLoader, Pager, Textarea, Toggle, cx, rangeLabel, usePageSize, usePaging, useToast } from '../ui.jsx';
 import { PageTitle, SearchBox, Table, Td, isLocalAddress, siteAddress } from './shared.jsx';
 import DesksModal, { nextDeskNumber } from './DesksModal.jsx';
 import IndustrySelect from '../IndustrySelect.jsx';
@@ -328,10 +328,7 @@ function LoginModal({ company, onClose, onChanged }) {
       <p className="mt-4 text-sm text-slate-600">
         To use another phone or a laptop, <span className="font-bold text-slate-900">{labelOf(company)}</span> opens its dashboard with this access code. It sees only the candidates who applied to it.
       </p>
-      <div className="mt-4 rounded-2xl bg-slate-900 px-4 py-4 text-center text-white">
-        <p className="text-[11px] font-extrabold uppercase tracking-widest text-amber-300">Access code</p>
-        <p className="mt-1 select-all font-mono text-3xl font-bold tracking-[0.15em]">{formatCode(code)}</p>
-      </div>
+      <AccessCode code={code} shown={formatCode(code)} />
 
       <p className="mb-1.5 mt-4 text-sm font-semibold text-slate-700">Message to send to the company</p>
       <textarea
@@ -496,7 +493,13 @@ export default function Companies() {
         {shown.slice(paging.start, paging.end).map((c) => (
           <tr key={c.id} className={c.active ? '' : 'bg-slate-50 text-slate-400'}>
             <Td primary>
-              {c.name ? <p className="font-bold text-slate-900">{c.name}</p> : <p className="font-bold text-slate-500">Free desk QR code</p>}
+              {c.name ? (
+                <Link to={`/admin/companies/${c.id}/queue`} title="Open the live queue" className="font-bold text-slate-900 underline-offset-4 hover:text-blue-700 hover:underline">
+                  {c.name}
+                </Link>
+              ) : (
+                <p className="font-bold text-slate-500">Free desk QR code</p>
+              )}
               <p className="text-xs text-slate-500">
                 {c.name ? c.industry || '—' : 'No company has activated it yet'}
                 {!c.active && <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-600">Hidden</span>}

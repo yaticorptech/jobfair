@@ -144,6 +144,32 @@ export function InfoProvider({ children }) {
     refresh();
   }, [refresh]);
 
+  // Live: the organisers' switches (registration, applications, interviews) are checked every
+  // 15 seconds while the page is open, and at once when the person comes back to the tab.
+  // A failed check keeps what is shown; it never replaces the page with an error.
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState !== 'visible') return;
+      api('/public/switches')
+        .then((sw) =>
+          setInfo((old) => {
+            if (!old) return old;
+            const same = Object.keys(sw).every((k) => old[k] === sw[k]);
+            return same ? old : { ...old, ...sw };
+          }),
+        )
+        .catch(() => {});
+    };
+    const timer = setInterval(check, 15000);
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('focus', check);
+    };
+  }, []);
+
   useEffect(() => {
     if (info?.fair_name) document.title = info.fair_name;
   }, [info?.fair_name]);

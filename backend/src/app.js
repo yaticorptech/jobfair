@@ -66,7 +66,16 @@ export function createApp() {
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
   if (servesPages) {
-    app.use(express.static(PAGES, { index: false, maxAge: '1h' }));
+    // The service worker (push alerts) is always checked for a newer copy.
+    app.use(
+      express.static(PAGES, {
+        index: false,
+        maxAge: '1h',
+        setHeaders: (res, file) => {
+          if (file.endsWith('sw.js')) res.setHeader('Cache-Control', 'no-cache');
+        },
+      }),
+    );
     app.use((req, res, next) => {
       if (req.method !== 'GET') return next();
       res.setHeader('Cache-Control', 'no-cache');

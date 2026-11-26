@@ -45,6 +45,12 @@ export const applications = db.collection('applications');
 // Candidates who said Yes to the Government Certified AI Course when registering. Kept apart
 // from candidates; nothing is saved here for a candidate who said No.
 export const aiCourseLeads = db.collection('ai_course_leads');
+// Browser push subscriptions: one per candidate's phone or browser that turned on alerts.
+export const pushSubs = db.collection('push_subscriptions');
+// Messages from the organisers to candidates, companies or both.
+export const announcements = db.collection('announcements');
+// Every alert sent to one candidate (your turn, result, ...), kept as their notification history.
+export const notifications = db.collection('notifications');
 const counters = db.collection('counters'); // { _id: collection name, seq: last number given out }
 
 export const closeDb = () => client.close();
@@ -95,6 +101,10 @@ await Promise.all([
   applications.createIndex({ candidate_id: 1, company_id: 1 }, { unique: true }),
   applications.createIndex({ company_id: 1, token_no: 1 }, { unique: true }),
   aiCourseLeads.createIndex({ candidate_id: 1 }, { unique: true }),
+  pushSubs.createIndex({ endpoint: 1 }, { unique: true }),
+  pushSubs.createIndex({ candidate_id: 1 }),
+  announcements.createIndex({ created_at: -1 }),
+  notifications.createIndex({ candidate_id: 1, created_at: -1 }),
 ]);
 
 // Each company logs in to its dashboard with an access code that the organisers hand out.
@@ -133,6 +143,8 @@ const DEFAULT_SETTINGS = {
     "Candidates with qualifications such as Bachelor's Degree (BA), Postgraduate Degree, MBA, Engineering and other relevant qualifications.",
   notice: 'Please bring 10 copies of your Resume (CV).',
   registration_open: '1',
+  company_registration_open: '1',
+  interviews_open: '1',
   applications_open: '1',
   max_applications: '0',
   site_url: '',
@@ -145,11 +157,18 @@ await settings.bulkWrite(
   })),
 );
 
+// Every page checks the settings often (the switches), so they are read from the database at
+// most every 2 seconds. A change made here is seen at once.
+let settingsCache = null;
 export async function getSettings() {
+  if (settingsCache && Date.now() - settingsCache.at < 2000) return { ...settingsCache.value };
   const rows = await settings.find().toArray();
-  return Object.fromEntries(rows.map((r) => [r._id, r.value]));
+  const value = Object.fromEntries(rows.map((r) => [r._id, r.value]));
+  settingsCache = { at: Date.now(), value };
+  return { ...value };
 }
 
 export async function setSetting(key, value) {
   await settings.updateOne({ _id: key }, { $set: { value: String(value) } }, { upsert: true });
+  settingsCache = null;
 }

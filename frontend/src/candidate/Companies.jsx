@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Building2, Check, ChevronRight, CircleCheck, Megaphone, ScanQrCode, Search } from 'lucide-react';
-import { api } from '../lib.jsx';
+import { api, useInfo } from '../lib.jsx';
 import { Avatar, Button, Empty, Modal, Notice, RoomBadge, TokenBadge, cx, useToast } from '../ui.jsx';
 
 const PAGE = 30;
@@ -35,6 +35,17 @@ function CompanyRow({ c }) {
               <Check className="size-3.5" aria-hidden="true" /> Applied · Token {app.token_no}
             </span>
           )}
+          {!app && !c.room_no && (
+            <span className="mt-1 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">Applications open when the desk is ready</span>
+          )}
+          {c.on_break && (
+            <span className="mt-1 ml-1 inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-xs font-bold text-orange-800">
+              {c.on_break === 'lunch' ? 'Lunch break' : 'On a short break'}
+            </span>
+          )}
+          {!app && c.withdrawn && (
+            <span className="mt-1 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">Withdrawn</span>
+          )}
         </span>
         <RoomBadge room={c.room_no} />
         <ChevronRight className="size-5 shrink-0 text-slate-300" aria-hidden="true" />
@@ -45,6 +56,7 @@ function CompanyRow({ c }) {
 
 export function ApplyModal({ company, onClose, onDone }) {
   const toast = useToast();
+  const { refresh: refreshInfo } = useInfo();
   const [role, setRole] = useState(company.roles.length === 1 ? company.roles[0] : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -63,6 +75,7 @@ export function ApplyModal({ company, onClose, onDone }) {
       onDone();
     } catch (err) {
       setError(err.message);
+      if (err.status === 403) refreshInfo(); // applications were just closed: the page shows it at once
       if (err.status === 409) onDone();
       else toast(err.message, 'error');
     } finally {

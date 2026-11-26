@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { BadgeCheck, Building2, ChevronRight, ClipboardList, Ellipsis, ExternalLink, LayoutDashboard, LogOut, QrCode, Settings as SettingsIcon, Users } from 'lucide-react';
+import { BadgeCheck, Building2, Gauge, Megaphone, ChevronRight, ClipboardList, Ellipsis, ExternalLink, LayoutDashboard, LogOut, QrCode, Settings as SettingsIcon, Users } from 'lucide-react';
 import { setToken, useInfo } from '../lib.jsx';
 import { Brand, Credit, Modal, cx } from '../ui.jsx';
 import Overview from './Overview.jsx';
 import Companies from './Companies.jsx';
+import DeskControl from './DeskControl.jsx';
+import Announcements from './Announcements.jsx';
+import CompanyQueue from './CompanyQueue.jsx';
 import QrCodes from './QrCodes.jsx';
 import Candidates from './Candidates.jsx';
 import Applications from './Applications.jsx';
@@ -12,15 +15,26 @@ import Settings from './Settings.jsx';
 import AiCourse from './AiCourse.jsx';
 
 // "more" sections are reached through the More button on phones, where the bottom bar has room for five.
+// In the side bar the sections follow the day: the overview, running the fair, the records,
+// then the setup done before the fair.
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: LayoutDashboard },
-  { to: '/admin/companies', label: 'Companies', icon: Building2 },
-  { to: '/admin/qr', label: 'QR codes', icon: QrCode, more: true },
-  { to: '/admin/candidates', label: 'Candidates', icon: Users },
-  { to: '/admin/applications', label: 'Applications', short: 'Applied', icon: ClipboardList },
-  { to: '/admin/ai-course', label: 'AI Course', icon: BadgeCheck, more: true },
-  { to: '/admin/settings', label: 'Settings', icon: SettingsIcon, more: true },
+  { group: 'Fair day', to: '/admin/desks', label: 'Desk control', short: 'Desks', icon: Gauge },
+  { group: 'Fair day', to: '/admin/announcements', label: 'Announcements', icon: Megaphone, more: true },
+  { group: 'Records', to: '/admin/companies', label: 'Companies', icon: Building2 },
+  { group: 'Records', to: '/admin/candidates', label: 'Candidates', icon: Users },
+  { group: 'Records', to: '/admin/applications', label: 'Applications', short: 'Applied', icon: ClipboardList, more: true },
+  { group: 'Records', to: '/admin/ai-course', label: 'AI Course', icon: BadgeCheck, more: true },
+  { group: 'Setup', to: '/admin/qr', label: 'QR codes', icon: QrCode, more: true },
+  { group: 'Setup', to: '/admin/settings', label: 'Settings', icon: SettingsIcon, more: true },
 ];
+// The side bar, section by section.
+const GROUPS = NAV.reduce((list, item) => {
+  const last = list[list.length - 1];
+  if (last && last.name === (item.group ?? '')) last.items.push(item);
+  else list.push({ name: item.group ?? '', items: [item] });
+  return list;
+}, []);
 const BAR = NAV.filter((item) => !item.more);
 const MORE = NAV.filter((item) => item.more);
 
@@ -46,22 +60,29 @@ export default function Admin() {
           <Brand name={info.fair_name} to="/admin" />
           <p className="mt-1 pl-[46px] text-xs font-bold text-slate-400">Organiser panel</p>
         </div>
-        <nav className="flex-1 space-y-1 px-3" aria-label="Admin sections">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                cx(
-                  'flex min-h-12 items-center gap-3 rounded-2xl px-3.5 text-[15px] font-bold transition',
-                  isActive ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/30' : 'text-slate-600 hover:bg-slate-100',
-                )
-              }
-            >
-              <item.icon className="size-5" aria-hidden="true" />
-              {item.label}
-            </NavLink>
+        <nav className="flex-1 overflow-y-auto px-3 pb-3" aria-label="Admin sections">
+          {GROUPS.map((group) => (
+            <div key={group.name || 'top'} className={group.name ? 'mt-5' : ''}>
+              {group.name && <p className="mb-1.5 px-3.5 text-[11px] font-extrabold uppercase tracking-widest text-slate-400">{group.name}</p>}
+              <div className="space-y-0.5">
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      cx(
+                        'flex min-h-11 items-center gap-3 rounded-xl px-3.5 text-[15px] font-bold transition',
+                        isActive ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/30' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+                      )
+                    }
+                  >
+                    <item.icon className="size-5 shrink-0" aria-hidden="true" />
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
         <div className="space-y-1 border-t border-slate-100 p-3">
@@ -82,10 +103,13 @@ export default function Admin() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 pb-28 pt-5 lg:px-8 lg:pb-10 print:m-0 print:max-w-none print:p-0!">
+      <main className="w-full px-4 pb-28 pt-5 lg:px-8 lg:pb-10 2xl:px-12 print:m-0 print:max-w-none print:p-0!">
         <Routes>
           <Route index element={<Overview />} />
           <Route path="companies" element={<Companies />} />
+          <Route path="companies/:id/queue" element={<CompanyQueue />} />
+          <Route path="desks" element={<DeskControl />} />
+          <Route path="announcements" element={<Announcements />} />
           <Route path="qr" element={<QrCodes />} />
           <Route path="candidates" element={<Candidates />} />
           <Route path="applications" element={<Applications />} />

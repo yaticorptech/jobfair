@@ -4,6 +4,7 @@ import { ArrowRight, Briefcase, ChevronRight, CircleCheck, ExternalLink, Graduat
 import { api, getToken, useInfo, withNext } from './lib.jsx';
 import { Avatar, Button, Card, Credit, Empty, ErrorNote, PageLoader, RoomBadge, StatusBadge, StickyBar, TokenBadge, TopBar, cx, useToast } from './ui.jsx';
 import QueueNote from './candidate/QueueNote.jsx';
+import { PushPrompt } from './candidate/PushCard.jsx';
 import { ApplyModal, Fact } from './candidate/Companies.jsx';
 
 function Count({ label, value }) {
@@ -121,7 +122,7 @@ export default function CompanyPage() {
     if (!waiting) return undefined;
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') load();
-    }, 20000);
+    }, 10000);
     return () => clearInterval(timer);
   }, [waiting, load]);
 
@@ -190,7 +191,7 @@ export default function CompanyPage() {
                   <RoomBadge room={company.room_no} big />
                 </div>
                 {app.status === 'applied' && app.queue ? (
-                  <QueueNote app={app} nowServing={company.now_serving} nowServingStarted={company.now_serving_started} nowServingDone={company.now_serving_done} room={company.room_no} className="mt-3" />
+                  <QueueNote app={app} nowServing={company.now_serving} nowServingStarted={company.now_serving_started} nowServingDone={company.now_serving_done} onBreak={company.on_break} room={company.room_no} className="mt-3" />
                 ) : (
                   <p className="mt-3 text-sm text-slate-500">Tell them your token number when you reach the interview desk.</p>
                 )}
@@ -277,6 +278,10 @@ export default function CompanyPage() {
             <Button as={Link} to={loggedIn ? '/dashboard/scan' : home} variant="secondary" size="lg">
               <ScanQrCode className="size-5" aria-hidden="true" /> Scan another desk QR code
             </Button>
+          ) : !company.room_no ? (
+            <p className="py-3 text-center font-bold text-slate-600">Applications open as soon as this company reaches its interview desk. Please check again soon.</p>
+          ) : company.withdrawn ? (
+            <p className="py-3 text-center font-bold text-slate-600">You withdrew from this company. Each company accepts one application per candidate.</p>
           ) : !info.applications_open ? (
             <p className="py-3 text-center font-bold text-slate-600">Applications are closed right now.</p>
           ) : loggedIn ? (
@@ -298,6 +303,7 @@ export default function CompanyPage() {
         </StickyBar>
       )}
 
+      {loggedIn && <PushPrompt />}
       {applying && company && <ApplyModal company={company} onClose={() => setApplying(false)} onDone={() => load()} />}
     </div>
   );

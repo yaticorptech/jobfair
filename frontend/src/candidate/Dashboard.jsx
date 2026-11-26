@@ -6,6 +6,9 @@ import { Avatar, Brand, Credit, ErrorNote, PageLoader, cx, useToast } from '../u
 import Companies from './Companies.jsx';
 import Applications from './Applications.jsx';
 import Profile from './Profile.jsx';
+import PushCard, { PushPrompt } from './PushCard.jsx';
+import AnnouncementFeed from '../AnnouncementFeed.jsx';
+import NotificationList, { NotificationBell } from '../Notifications.jsx';
 
 // The QR reader is only downloaded when a candidate opens the scanner.
 const Scanner = lazy(() => import('./Scanner.jsx'));
@@ -19,7 +22,7 @@ const TABS = [
 ];
 
 export default function Dashboard() {
-  const { info, refresh: refreshInfo } = useInfo();
+  const { info } = useInfo();
   const navigate = useNavigate();
   const location = useLocation();
   const toast = useToast();
@@ -41,20 +44,36 @@ export default function Dashboard() {
 
   useEffect(loadAll, [loadAll]);
 
-  // Keep desk numbers, tokens and results fresh while the page is open.
+  // Live while the page is open: every 10 seconds only the candidate's own tokens and their desks
+  // (small), merged into the list; the full company list every 2 minutes and when the candidate
+  // comes back to the page. (The fair's switches are kept live by the info provider.)
   useEffect(() => {
-    const tick = () => {
+    const live = () => {
       if (document.visibilityState !== 'visible') return;
-      loadCompanies().catch(() => {});
-      refreshInfo();
+      api('/me/queue')
+        .then((mine) => {
+          const byId = new Map(mine.map((m) => [m.id, m]));
+          setCompanies((old) =>
+            old?.map((c) => {
+              const m = byId.get(c.id);
+              return m ? { ...c, ...m } : c.application ? { ...c, application: null } : c;
+            }),
+          );
+        })
+        .catch(() => {});
     };
-    const timer = setInterval(tick, 20000); // often enough to follow the "now serving" token
-    document.addEventListener('visibilitychange', tick);
+    const full = () => {
+      if (document.visibilityState === 'visible') loadCompanies().catch(() => {});
+    };
+    const fast = setInterval(live, 10000); // often enough to follow the "now serving" token
+    const slow = setInterval(full, 120000);
+    document.addEventListener('visibilitychange', full);
     return () => {
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', tick);
+      clearInterval(fast);
+      clearInterval(slow);
+      document.removeEventListener('visibilitychange', full);
     };
-  }, [loadCompanies, refreshInfo]);
+  }, [loadCompanies]);
 
   // Shown once only: React runs this twice in development, before the state is cleared.
   const welcomed = useRef(false);
@@ -82,6 +101,7 @@ export default function Dashboard() {
         <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-3 px-4 lg:max-w-5xl">
           <Brand name={info.fair_name} to="/dashboard" />
           <div className="flex shrink-0 items-center gap-2">
+            <NotificationBell to="/dashboard/notifications" path="/me/notifications" every={60000} />
             <Link to="/dashboard/profile" aria-label="My profile" className="flex items-center gap-2.5 rounded-full py-1 pl-1 hover:bg-slate-100 sm:pr-3">
               <Avatar name={me.full_name} round className="size-9 text-xs" />
               <span className="hidden text-sm font-bold text-slate-800 sm:block">{me.full_name}</span>
@@ -114,6 +134,9 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-5 lg:max-w-5xl">
+        <AnnouncementFeed path="/me/announcements" storageKey="jobfair_news_candidate" className="mb-4" every={60000} />
+        <PushCard />
+        <PushPrompt />
         <Routes>
           <Route index element={<Companies me={me} companies={companies} info={info} />} />
           <Route
@@ -126,6 +149,7 @@ export default function Dashboard() {
           />
           <Route path="applications" element={<Applications companies={companies} reload={loadCompanies} />} />
           <Route path="profile" element={<Profile me={me} setMe={setMe} onLogout={logout} />} />
+          <Route path="notifications" element={<NotificationList path="/me/notifications" seenPath="/me/notifications/seen" />} />
         </Routes>
         <Credit className="mt-8" />
       </main>

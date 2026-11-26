@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, LoaderCircle, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Copy, LoaderCircle, X } from 'lucide-react';
 import { DEVELOPER, STATUS, initials } from './lib.jsx';
 
 // The look of the whole site lives here: big touch targets, short labels, one clear
@@ -466,4 +466,55 @@ export function usePageSize(phone, wide) {
     return () => list.removeEventListener('change', update);
   }, []);
   return small ? phone : wide;
+}
+
+// A company's access code in a dark box. Tapping the box copies the code (as typed at login, without
+// the dash) and says so for a moment.
+export function AccessCode({ code, shown }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  async function copy() {
+    const text = String(code ?? '');
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Older browsers or a page without clipboard access: copy through a hidden text box.
+      const box = document.createElement('textarea');
+      box.value = text;
+      box.setAttribute('readonly', '');
+      box.style.position = 'fixed';
+      box.style.opacity = '0';
+      document.body.appendChild(box);
+      box.select();
+      document.execCommand('copy');
+      box.remove();
+    }
+    setCopied(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      aria-label={`Access code ${shown}. Tap to copy`}
+      className="group mt-4 block w-full cursor-pointer rounded-2xl border border-dashed border-blue-300 bg-blue-50/60 px-4 py-4 text-center transition hover:border-blue-400 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 active:scale-[0.99]"
+    >
+      <span className="block text-[11px] font-extrabold uppercase tracking-widest text-blue-700">Access code</span>
+      <span className="mt-1 block font-mono text-3xl font-bold tracking-[0.15em] text-slate-900">{shown}</span>
+      <span
+        className={cx(
+          'mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition',
+          copied ? 'bg-emerald-100 text-emerald-800' : 'bg-white text-blue-700 ring-1 ring-inset ring-blue-200 group-hover:bg-blue-600 group-hover:text-white group-hover:ring-blue-600',
+        )}
+        aria-live="polite"
+      >
+        {copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+        {copied ? 'Copied' : 'Tap to copy'}
+      </span>
+    </button>
+  );
 }

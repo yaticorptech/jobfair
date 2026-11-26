@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, Check, DoorClosed } from 'lucide-react';
 import { api, getToken, nextPath, setToken, useInfo, withNext } from './lib.jsx';
 import { Button, Card, Credit, Empty, StickyBar, TopBar, cx, useToast } from './ui.jsx';
+import { askForAlerts } from './push.js';
 import { FIELD_GROUPS, candidateErrors, emptyCandidate } from './candidate/CandidateFields.jsx';
 
 // The last screen of registration only: would the candidate like the Government Certified AI
@@ -65,7 +66,7 @@ const STEP_COUNT = STEPS.length;
 const aiCourseErrors = (v) => (v.ai_course ? {} : { ai_course: 'Please choose Yes or No' });
 
 export default function Register() {
-  const { info } = useInfo();
+  const { info, refresh: refreshInfo } = useInfo();
   const navigate = useNavigate();
   const toast = useToast();
   // Set when the candidate came from a desk QR code: they go back to that company afterwards.
@@ -118,6 +119,7 @@ export default function Register() {
     try {
       const data = await api('/auth/register', { method: 'POST', body: v });
       setToken('candidate', data.token);
+      askForAlerts();
       if (next) {
         toast('Registration successful. You can apply now.');
         navigate(next, { replace: true });
@@ -126,6 +128,7 @@ export default function Register() {
       }
     } catch (err) {
       setBusy(false);
+      if (err.status === 403) refreshInfo(); // registration was just closed: the page shows it at once
       // The server found a problem (for example, the mobile number is already registered):
       // go back to the screen that has that question.
       const fields = err.fields || {};

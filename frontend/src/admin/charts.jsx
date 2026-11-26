@@ -22,7 +22,9 @@ export function ChartCard({ title, sub, action, className, children }) {
   );
 }
 
-const Empty = ({ text = 'No data yet' }) => <p className="grid h-full min-h-24 place-items-center text-sm text-slate-400">{text}</p>;
+const Empty = ({ text = 'No data yet' }) => (
+  <p className="grid h-full min-h-40 place-items-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-6 text-center text-sm font-medium text-slate-400">{text}</p>
+);
 
 /** Horizontal bars: a label, a bar and the number, one row per item. */
 export function BarList({ items, total, empty }) {
@@ -411,7 +413,10 @@ export function Donut({ items, empty, center = 'Total' }) {
   let at = 0;
   const active = hover != null ? list[hover] : null;
   return (
-    <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center" onMouseLeave={() => setHover(null)}>
+    // The legend sits beside the ring only when the card is wide enough to give the labels room;
+    // otherwise it goes under the ring, full width.
+    <div className="@container" onMouseLeave={() => setHover(null)}>
+    <div className="flex flex-col items-center gap-5 @lg:flex-row @lg:items-center">
       <div className="relative size-36 shrink-0">
         <svg viewBox="0 0 42 42" className="size-full -rotate-90" aria-hidden="true">
           <circle cx="21" cy="21" r={R} fill="none" stroke="#f1f5f9" strokeWidth="6" />
@@ -448,18 +453,19 @@ export function Donut({ items, empty, center = 'Total' }) {
         {list.map((x, i) => (
           <li
             key={x.label}
-            className={cx('flex cursor-default items-center gap-2 rounded-lg px-1.5 py-0.5 text-sm transition-colors', hover === i && 'bg-slate-100')}
+            className={cx('flex cursor-default items-start gap-2 rounded-lg px-1.5 py-1 text-sm transition-colors', hover === i && 'bg-slate-100')}
             onMouseEnter={() => setHover(i)}
           >
-            <span className="size-2.5 shrink-0 rounded-sm" style={{ background: x.color }} aria-hidden="true" />
-            <span className={cx('min-w-0 flex-1 truncate', x.other ? 'text-slate-500' : 'font-semibold text-slate-700')} title={x.label}>
+            <span className="mt-1.5 size-2.5 shrink-0 rounded-sm" style={{ background: x.color }} aria-hidden="true" />
+            <span className={cx('min-w-0 flex-1 break-words leading-snug', x.other ? 'text-slate-500' : 'font-semibold text-slate-700')} title={x.label}>
               {x.label}
             </span>
             <span className="shrink-0 font-bold tabular-nums text-slate-900">{fmt(x.value)}</span>
-            <span className="w-9 shrink-0 text-right text-xs tabular-nums text-slate-400">{pct(x.value, total)}%</span>
+            <span className="w-9 shrink-0 pt-0.5 text-right text-xs tabular-nums text-slate-400">{pct(x.value, total)}%</span>
           </li>
         ))}
       </ul>
+    </div>
     </div>
   );
 }

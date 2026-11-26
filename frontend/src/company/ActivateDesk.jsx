@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { CircleCheck } from 'lucide-react';
-import { api } from '../lib.jsx';
+import { api, setToken } from '../lib.jsx';
 import { Button, Field, Input, Modal } from '../ui.jsx';
 import { FormError } from '../Login.jsx';
 import { QrReader } from '../candidate/Scanner.jsx';
@@ -10,7 +10,6 @@ import { QrReader } from '../candidate/Scanner.jsx';
 // that poster see this company from then on. If the floor is not known yet, the company is asked
 // for it straight after. onDone is given the company with its new desk.
 export default function ActivateDesk({ company, onClose, onDone }) {
-  const [deskNo, setDeskNo] = useState('');
   const [floor, setFloor] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -21,6 +20,7 @@ export default function ActivateDesk({ company, onClose, onDone }) {
     async (body) => {
       try {
         const data = await api('/recruiter/desk', { method: 'POST', body });
+        if (data.token) setToken('recruiter', data.token); // this session is now at the desk
         if (data.company.location) onDone(data.company);
         else setMine(data.company);
         return '';
@@ -32,18 +32,6 @@ export default function ActivateDesk({ company, onClose, onDone }) {
   );
 
   const scanned = useCallback((text) => send({ qr: text }), [send]);
-
-  async function typed(e) {
-    e.preventDefault();
-    if (!deskNo.trim()) {
-      setError('Enter the desk number printed on the poster');
-      return;
-    }
-    setBusy(true);
-    const problem = await send({ desk_no: deskNo, location: floor });
-    setBusy(false);
-    if (problem) setError(problem);
-  }
 
   async function saveFloor(e) {
     e.preventDefault();
@@ -87,7 +75,7 @@ export default function ActivateDesk({ company, onClose, onDone }) {
   }
 
   return (
-    <Modal open wide title={company.desk_id ? 'Scan the QR code at your new desk' : 'Activate your desk'} onClose={onClose}>
+    <Modal open wide title={company.room_no ? 'Scan the QR code at your desk' : 'Activate your desk'} onClose={onClose}>
       <p className="mb-4 text-[15px] text-slate-600">
         Point the camera at the QR code on the poster at your interview desk. That desk becomes yours, and candidates who scan the poster will see your company.
       </p>
@@ -95,32 +83,7 @@ export default function ActivateDesk({ company, onClose, onDone }) {
         <QrReader onText={scanned} />
       </div>
 
-      <form onSubmit={typed} noValidate className="mt-5 border-t border-slate-100 pt-4">
-        <p className="mb-3 font-bold text-slate-900">Or type it</p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Interview desk number" hint="The big number on the poster">
-            <Input
-              value={deskNo}
-              onChange={(e) => {
-                setDeskNo(e.target.value);
-                setError('');
-              }}
-              inputMode="numeric"
-              maxLength={20}
-              placeholder="e.g. 12"
-            />
-          </Field>
-          <Field label="Floor number" hint="e.g. 1, or Ground floor">
-            <Input value={floor} onChange={(e) => setFloor(e.target.value)} maxLength={80} placeholder="e.g. 1" />
-          </Field>
-        </div>
-        <div className="mt-3 space-y-3">
-          <FormError>{error}</FormError>
-          <Button type="submit" size="lg" loading={busy} className="w-full">
-            Activate this desk
-          </Button>
-        </div>
-      </form>
+      <p className="mt-4 text-center text-sm text-slate-500">You do this once. The desk is then linked to your company, and later logins open your dashboard straight away.</p>
     </Modal>
   );
 }

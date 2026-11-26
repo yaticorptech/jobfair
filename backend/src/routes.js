@@ -4,10 +4,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as XLSX from 'xlsx';
+import { notify, notifyEveryone, pushPublicKey, removeSubscription, saveSubscription } from './push.js';
 import {
   NO_ID,
   RESUME_DIR,
   aiCourseLeads,
+  announcements,
+  notifications,
   applications,
   candidates,
   companies,
@@ -29,6 +32,8 @@ import {
   newLoginKey,
   recordFailure,
   recruiterToken,
+  requireAtDesk,
+  deskOf,
   requireAdmin,
   requireCandidate,
   requireRecruiter,
@@ -134,6 +139,8 @@ async function settingsOut() {
     eligibility: s.eligibility,
     notice: s.notice,
     registration_open: s.registration_open === '1',
+    company_registration_open: s.company_registration_open !== '0',
+    interviews_open: s.interviews_open !== '0',
     applications_open: s.applications_open === '1',
     max_applications: Number(s.max_applications) || 0,
     site_url: s.site_url || '',
@@ -385,6 +392,9 @@ function companyOut(row) {
     now_serving: row.now_serving ?? 0,
     now_serving_started: Boolean(row.now_serving_started), // the company pressed Start interview
     now_serving_done: Boolean(row.now_serving_done),
+    // The desk is on a short break or lunch break ('break' | 'lunch'), or null while interviewing.
+    on_break: BREAKS.includes(row.on_break) ? row.on_break : null,
+    break_since: BREAKS.includes(row.on_break) ? row.break_since ?? null : null,
   };
 }
 
@@ -445,12 +455,34 @@ async function resolveCompany(id) {
 
 // The desk's queue changes all the time during the fair (every call and every result), so the
 // company kept in memory is updated in place instead of reading every company again.
+// ── Breaks ──
+// A desk can take a short break or a lunch break; candidates waiting for it see that on their screen.
+// The company sets it from its dashboard, the organisers for one desk or for every desk at once.
+const BREAKS = ['break', 'lunch'];
+const breakKind = (v) => (BREAKS.includes(v) ? v : null);
+// `by`: 'company' or 'admin'. A change by the organisers is shown to the company as an alert.
+async function setBreak(filter, kind, by = 'company') {
+  const t = now();
+  const result = await companies.updateMany(filter, { $set: { on_break: kind, break_since: kind ? t : null, break_by: by, break_changed_at: t } });
+  dropCompanyCache();
+  return result.modifiedCount;
+}
+const BREAK_TEXT = { break: 'on a short break', lunch: 'on lunch break' };
+// Calling candidates in waits until the company ends its break.
+function refuseOnBreak(company, res) {
+  const kind = breakKind(company.on_break);
+  if (!kind) return false;
+  res.status(409).json({ error: `Your desk is ${BREAK_TEXT[kind]}. End the break to call candidates in.`, code: 'on_break' });
+  return true;
+}
+
 function patchCachedCompany(companyId, changes) {
   const entry = companyCache?.list.find((c) => c.id === companyId);
   if (entry) Object.assign(entry, changes);
 }
 
 function bumpApplicants(companyId, by) {
+  waitingCache.delete(companyId); // the desk's queue changed
   const entry = companyCache?.list.find((c) => c.id === companyId);
   if (entry) entry.applicants = Math.max(0, entry.applicants + by);
 }
@@ -624,8 +656,10 @@ router.post(
 router.post(
   '/auth/login',
   wrap(async (req, res) => {
+    // A whole hall can share one internet address (the venue Wi-Fi), and 5000 people mistype now
+    // and then: the limit is sized for that, so a busy hall is never locked out.
     const key = `c|${req.ip}`;
-    if (tooManyAttempts(key, 300)) {
+    if (tooManyAttempts(key, 2500)) {
       return res.status(429).json({ error: 'Too many wrong attempts. Please try again after 15 minutes.' });
     }
     const mobile = normMobile(req.body?.mobile ?? req.body?.login);
@@ -642,6 +676,192 @@ router.post(
 );
 
 // ───────────────────────── candidate area ─────────────────────────
+
+// ── Announcements ──
+// The organisers write to candidates, companies or both. Candidates with alerts on get a push
+// alert; everyone sees the message on their dashboard. Only the last two days are shown.
+const announcementOut = (a) => ({ id: a.id, title: a.title, body: a.body, to_candidates: a.to_candidates, to_companies: a.to_companies, created_at: a.created_at, pushed: a.pushed ?? 0 });
+// Every open dashboard checks for announcements, so the recent ones are kept for 3 seconds.
+let newsCache = null;
+const dropNewsCache = () => {
+  newsCache = null;
+};
+async function recentAnnouncements(filter) {
+  if (!newsCache || Date.now() - newsCache.at > 3000) {
+    const rows = await announcements
+      .find({ created_at: { $gte: new Date(Date.now() - 2 * 86400000).toISOString().replace('T', ' ').slice(0, 19) } }, { projection: { _id: 0 } })
+      .sort({ created_at: -1 })
+      .limit(20)
+      .toArray();
+    newsCache = { at: Date.now(), rows };
+  }
+  return newsCache.rows.filter((a) => (filter.to_candidates ? a.to_candidates : a.to_companies)).slice(0, 5);
+}
+
+// Saves an announcement and alerts candidates' phones when it is for them.
+async function announce({ title, body = '', toCandidates, toCompanies }) {
+  const row = { id: await nextId('announcements'), title, body, to_candidates: toCandidates, to_companies: toCompanies, created_at: now(), pushed: 0 };
+  await announcements.insertOne({ ...row });
+  dropNewsCache();
+  if (toCandidates) {
+    row.pushed = await notifyEveryone({ title, body: body || 'Open Blue Chip Connect for details.', url: '/dashboard', tag: `news-${row.id}` });
+    await announcements.updateOne({ id: row.id }, { $set: { pushed: row.pushed } });
+  }
+  return row;
+}
+
+// The alert sent when a fair-wide switch is flipped: who it is for, and what it says.
+const SWITCH_ALERTS = {
+  interviews_open: {
+    candidates: true,
+    companies: true,
+    on: ['Interviews have resumed', 'Interviews are running again at every desk. Keep an eye on your token.'],
+    off: ['Interviews are paused', 'The organisers have paused interviews for now. Your token is safe; we will tell you when they resume.'],
+  },
+  applications_open: {
+    candidates: true,
+    companies: false,
+    on: ['Applications are open', 'You can apply to companies now. Open the company list to apply.'],
+    off: ['Applications are closed', 'New applications are closed for now. Your existing applications and tokens are not affected.'],
+  },
+};
+
+router.get(
+  '/admin/announcements',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const rows = await announcements.find({}, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(100).toArray();
+    res.json(rows.map(announcementOut));
+  }),
+);
+
+router.post(
+  '/admin/announcements',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const title = clean(req.body?.title, 80);
+    const body = cleanText(req.body?.body, 500);
+    const toCandidates = req.body?.to_candidates === true;
+    const toCompanies = req.body?.to_companies === true;
+    const errors = {};
+    if (title.length < 3) errors.title = 'Write a short title';
+    if (!toCandidates && !toCompanies) errors.audience = 'Choose who gets it: candidates, companies or both';
+    if (Object.keys(errors).length) return res.status(400).json({ error: Object.values(errors)[0], fields: errors });
+    res.status(201).json(announcementOut(await announce({ title, body, toCandidates, toCompanies })));
+  }),
+);
+
+router.delete(
+  '/admin/announcements/:id',
+  requireAdmin,
+  wrap(async (req, res) => {
+    await announcements.deleteOne({ id: toId(req.params.id) });
+    dropNewsCache();
+    res.json({ ok: true });
+  }),
+);
+
+// Notification history: everything a person was told, newest first, with what is new since they
+// last opened it. Candidates: their own alerts and the announcements for candidates. Companies:
+// the announcements for companies and the breaks the organisers started or ended for them.
+const KIND = (tag) => (tag.startsWith('turn') ? 'turn' : tag.startsWith('desk') ? 'desk' : tag.startsWith('ready') ? 'ready' : tag.startsWith('moved') ? 'moved' : tag.startsWith('status') ? 'status' : 'info');
+
+router.get(
+  '/me/notifications',
+  requireCandidate,
+  wrap(async (req, res) => {
+    const since = req.candidate.created_at || '';
+    // The bell only needs the number of new ones: two counts, no lists.
+    if (req.query.count) {
+      const seen = req.candidate.notif_seen_at || '';
+      const [own, news] = await Promise.all([
+        notifications.countDocuments({ candidate_id: req.candidate.id, created_at: { $gt: seen } }),
+        announcements.countDocuments({ to_candidates: true, created_at: { $gt: seen > since ? seen : since } }),
+      ]);
+      return res.json({ unread: own + news });
+    }
+    const [own, news] = await Promise.all([
+      notifications.find({ candidate_id: req.candidate.id }, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(100).toArray(),
+      announcements.find({ to_candidates: true, created_at: { $gte: since } }, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(50).toArray(),
+    ]);
+    const seen = req.candidate.notif_seen_at || '';
+    const rows = [
+      ...own.map((n) => ({ id: `n-${n.created_at}-${n.tag}`, kind: KIND(n.tag || ''), title: n.title, body: n.body, url: n.url, created_at: n.created_at })),
+      ...news.map((a) => ({ id: `a-${a.id}`, kind: 'announcement', title: a.title, body: a.body, url: '/dashboard', created_at: a.created_at })),
+    ].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    res.json({ unread: rows.filter((r) => r.created_at > seen).length, seen_at: seen, rows });
+  }),
+);
+router.post(
+  '/me/notifications/seen',
+  requireCandidate,
+  wrap(async (req, res) => {
+    await candidates.updateOne({ id: req.candidate.id }, { $set: { notif_seen_at: now() } });
+    res.json({ ok: true });
+  }),
+);
+router.get(
+  '/recruiter/notifications',
+  requireRecruiter,
+  wrap(async (req, res) => {
+    const c = req.company;
+    const news = await announcements.find({ to_companies: true, created_at: { $gte: c.created_at || '' } }, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(100).toArray();
+    const rows = news.map((a) => ({ id: `a-${a.id}`, kind: 'announcement', title: a.title, body: a.body, created_at: a.created_at }));
+    // The latest break change by the organisers, if any.
+    if (String(c.break_by || '').startsWith('admin') && c.break_changed_at) {
+      const kind = c.on_break;
+      rows.push({
+        id: `b-${c.break_changed_at}`,
+        kind: kind ? 'break' : 'resume',
+        title: kind ? `The organisers started a ${kind === 'lunch' ? 'lunch break' : 'short break'}` : 'The organisers ended the break',
+        body: c.break_by === 'admin-all' ? 'For every desk.' : 'For your desk.',
+        created_at: c.break_changed_at,
+      });
+      rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    }
+    const seen = c.notif_seen_at || '';
+    res.json({ unread: rows.filter((r) => r.created_at > seen).length, seen_at: seen, rows });
+  }),
+);
+router.post(
+  '/recruiter/notifications/seen',
+  requireRecruiter,
+  wrap(async (req, res) => {
+    await companies.updateOne({ id: req.company.id }, { $set: { notif_seen_at: now() } });
+    res.json({ ok: true });
+  }),
+);
+
+router.get('/me/announcements', requireCandidate, wrap(async (req, res) => res.json((await recentAnnouncements({ to_candidates: true })).map(announcementOut))));
+router.get('/recruiter/announcements', requireRecruiter, wrap(async (req, res) => res.json((await recentAnnouncements({ to_companies: true })).map(announcementOut))));
+
+// Push alerts: the public key for the browser, and the candidate's phone subscribing or leaving.
+router.get('/push/key', (req, res) => res.json({ key: pushPublicKey }));
+router.post(
+  '/me/push',
+  requireCandidate,
+  wrap(async (req, res) => {
+    if (!(await saveSubscription(req.candidate.id, req.body?.subscription))) return res.status(400).json({ error: 'This browser could not turn on alerts' });
+    res.json({ ok: true });
+  }),
+);
+router.delete(
+  '/me/push',
+  requireCandidate,
+  wrap(async (req, res) => {
+    await removeSubscription(req.candidate.id, req.body?.endpoint);
+    res.json({ ok: true });
+  }),
+);
+// A test alert, so the candidate sees that alerts reach this phone.
+router.post(
+  '/me/push/test',
+  requireCandidate,
+  wrap(async (req, res) => {
+    await notify(req.candidate.id, { title: 'Alerts are on', body: 'You will get an alert here when a company calls your token.', tag: 'test' });
+    res.json({ ok: true });
+  }),
+);
 
 router.get('/me', requireCandidate, (req, res) => res.json(candidateOut(req.candidate)));
 
@@ -682,7 +902,7 @@ router.post(
 
 router.get('/me/resume', requireCandidate, (req, res) => sendResume(res, req.candidate));
 
-const APPLICATION_OUT = { _id: 0, id: 1, role: 1, token_no: 1, status: 1, created_at: 1, called_at: 1 };
+const APPLICATION_OUT = { _id: 0, id: 1, role: 1, token_no: 1, status: 1, created_at: 1, called_at: 1, rescheduled_from: 1 };
 
 // ───────────────────────── the queue at a desk ─────────────────────────
 // The company calls candidates in by token. "Call next" takes the lowest waiting token after the
@@ -702,24 +922,39 @@ const missedFilter = (companyId, serving) => ({
 });
 
 // Where one candidate stands in the queue of a company that is serving token `serving`.
+// The waiting tokens of each desk, in order, kept for 2 seconds: thousands of candidates check their
+// place every few seconds, and one list per desk answers all of them.
+const waitingCache = new Map(); // companyId -> { at, tokens }
+async function waitingTokens(companyId) {
+  const hit = waitingCache.get(companyId);
+  if (hit && Date.now() - hit.at < 2000) return hit.tokens;
+  const rows = await applications.find(waitingFilter(companyId), { projection: { _id: 0, token_no: 1 } }).sort({ token_no: 1 }).toArray();
+  const tokens = rows.map((r) => r.token_no);
+  waitingCache.set(companyId, { at: Date.now(), tokens });
+  return tokens;
+}
+
 async function queuePlace(application, serving) {
   if (!application || application.status !== 'applied') return null;
   if (application.called_at && application.token_no === serving) return { state: 'called', ahead: 0 };
   if (application.called_at || application.token_no < serving) return { state: 'missed', ahead: 0 };
-  const ahead = await applications.countDocuments({
-    ...waitingFilter(application.company_id ?? 0),
-    token_no: { $gt: serving, $lt: application.token_no },
-  });
+  const tokens = await waitingTokens(application.company_id ?? 0);
+  let ahead = 0;
+  for (const t of tokens) {
+    if (t >= application.token_no) break;
+    if (t > serving) ahead += 1;
+  }
   return { state: 'waiting', ahead };
 }
 
 // The company's own view of its queue.
 async function queueOf(companyId) {
-  const company = await companies.findOne({ id: companyId }, { projection: { _id: 0, now_serving: 1 } });
+  const company = await companies.findOne({ id: companyId }, { projection: { _id: 0, now_serving: 1, on_break: 1, break_since: 1, break_by: 1, break_changed_at: 1 } });
   const serving = company?.now_serving ?? 0;
-  const [current, next, missed, waiting] = await Promise.all([
-    serving ? applications.findOne({ company_id: companyId, token_no: serving }, { projection: { _id: 0, id: 1, candidate_id: 1 } }) : null,
-    applications.findOne({ ...waitingFilter(companyId), token_no: { $gt: serving } }, { projection: { _id: 0, token_no: 1 }, sort: { token_no: 1 } }),
+  const [current, upcoming, missed, waiting] = await Promise.all([
+    serving ? applications.findOne({ company_id: companyId, token_no: serving }, { projection: { _id: 0, id: 1, candidate_id: 1, status: 1 } }) : null,
+    // The next three tokens: the first two wait at the desk, the third gets ready.
+    applications.find({ ...waitingFilter(companyId), token_no: { $gt: serving } }, { projection: { _id: 0, token_no: 1 }, sort: { token_no: 1 }, limit: 3 }).toArray(),
     applications.find(missedFilter(companyId, serving), { projection: { _id: 0, id: 1, token_no: 1 }, sort: { token_no: 1 } }).toArray(),
     applications.countDocuments({ ...waitingFilter(companyId), token_no: { $gt: serving } }),
   ]);
@@ -728,7 +963,16 @@ async function queueOf(companyId) {
   return {
     now_serving: serving,
     now_serving_name: name,
-    next_token: next?.token_no ?? null,
+    on_break: breakKind(company?.on_break),
+    break_since: breakKind(company?.on_break) ? company.break_since ?? null : null,
+    // Who last changed the break, and when: the dashboard alerts the company to the organisers' changes.
+    break_by: company?.break_by ?? null,
+    break_changed_at: company?.break_changed_at ?? null,
+    // Set while the token at the desk has no result yet, so it can be rescheduled if they are not here.
+    now_serving_id: current?.status === 'applied' ? current.id : null,
+    next_token: upcoming[0]?.token_no ?? null,
+    at_desk: upcoming.slice(0, 2).map((u) => u.token_no),
+    get_ready: upcoming[2]?.token_no ?? null,
     waiting,
     missed: missed.map((m) => ({ id: m.id, token_no: m.token_no })),
   };
@@ -737,6 +981,10 @@ async function queueOf(companyId) {
 // Calls one candidate in: their token is the one now being served.
 async function callIn(application) {
   const t = now();
+  waitingCache.delete(application.company_id);
+  const before = await companies.findOne({ id: application.company_id }, { projection: { _id: 0, name: 1, room_no: 1, now_serving: 1 } });
+  // A fresh call (not pressing Start interview for the token already at the desk) alerts the candidate.
+  const fresh = application.status === 'applied' && !(application.called_at && before?.now_serving === application.token_no);
   await applications.updateOne({ id: application.id }, { $set: { called_at: t, updated_at: t } });
   await companies.updateOne(
     { id: application.company_id },
@@ -754,10 +1002,63 @@ async function callIn(application) {
     now_serving_started: Boolean(application.interview?.started_at),
     now_serving_done: application.status !== 'applied',
   });
+  if (fresh && before) {
+    const desk = before.room_no ? `desk ${before.room_no}` : 'the interview desk';
+    notify(application.candidate_id, {
+      title: `It's your turn · Token ${application.token_no}`,
+      body: `${before.name} is calling you now. Go to ${desk}.`,
+      url: `/c/${application.company_id}`,
+      tag: `turn-${application.id}`,
+    });
+  }
+  alertUpcoming(application.company_id);
+}
+
+// The next three waiting tokens at a desk are told once each: the first two to wait at the desk,
+// the third to get ready. Runs after anything that moves the queue; never while the desk is on a break.
+async function alertUpcoming(companyId) {
+  try {
+    const company = await companies.findOne({ id: companyId }, { projection: { _id: 0, name: 1, room_no: 1, now_serving: 1, on_break: 1 } });
+    if (!company || breakKind(company.on_break)) return;
+    const next = await applications
+      .find({ ...waitingFilter(companyId), token_no: { $gt: company.now_serving ?? 0 } }, { projection: { _id: 0, id: 1, candidate_id: 1, token_no: 1, alerted: 1 } })
+      .sort({ token_no: 1 })
+      .limit(3)
+      .toArray();
+    const desk = company.room_no ? `desk ${company.room_no}` : 'the interview desk';
+    for (const [i, a] of next.entries()) {
+      const kind = i < 2 ? 'desk' : 'ready';
+      if (a.alerted?.desk || (kind === 'ready' && a.alerted?.ready)) continue;
+      await applications.updateOne({ id: a.id }, { $set: { [`alerted.${kind}`]: true } });
+      notify(
+        a.candidate_id,
+        kind === 'desk'
+          ? { title: `Wait at ${desk} · Token ${a.token_no}`, body: `You are ${i === 0 ? 'next' : 'second in line'} at ${company.name}. Please go to ${desk} and wait there.`, url: `/c/${companyId}`, tag: `desk-${a.id}` }
+          : { title: `Get ready · Token ${a.token_no}`, body: `Two candidates before you at ${company.name}. Head towards ${desk} now.`, url: `/c/${companyId}`, tag: `ready-${a.id}` },
+      );
+    }
+  } catch (err) {
+    console.error('Queue alerts failed:', err.message);
+  }
+}
+
+// Tells the candidate when their application's status changes (interview done, shortlisted, ...).
+// `before`: the application as it was, with candidate_id, company_id and status.
+const STATUS_ALERT = {
+  interviewed: (c) => ({ title: `Interview done at ${c}`, body: 'Thank you for attending. The company will update your result here.' }),
+  shortlisted: (c) => ({ title: `You are shortlisted at ${c}`, body: 'Congratulations! The company may contact you for the next round.' }),
+  selected: (c) => ({ title: `Selected at ${c}`, body: 'Congratulations! You have been selected. The company will contact you with the next steps.' }),
+  rejected: (c) => ({ title: `Update from ${c}`, body: 'You were not selected this time. Thank you for your interest, and all the best with the other companies.' }),
+};
+async function statusAlert(before, status) {
+  if (!before || before.status === status || !STATUS_ALERT[status]) return;
+  const company = await companies.findOne({ id: before.company_id }, { projection: { _id: 0, name: 1 } });
+  notify(before.candidate_id, { ...STATUS_ALERT[status](company?.name || 'the company'), url: '/dashboard/applications', tag: `status-${before.id}` });
 }
 
 // After a result is given: if it is the token at the desk, its interview shows as done to everyone.
 async function resultGiven(companyId, tokenNo, status) {
+  waitingCache.delete(companyId);
   const changed = await companies.updateOne({ id: companyId, now_serving: tokenNo }, { $set: { now_serving_done: status !== 'applied' } });
   if (changed.matchedCount) patchCachedCompany(companyId, { now_serving_done: status !== 'applied' });
 }
@@ -779,7 +1080,42 @@ router.get(
         ]),
       ),
     );
-    res.json(list.filter((c) => listed(c) || mine.has(c.id)).map((c) => ({ ...c, application: mine.get(c.id) ?? null })));
+    const withdrawn = new Set(req.candidate.withdrawn_from ?? []);
+    res.json(
+      list
+        .filter((c) => listed(c) || mine.has(c.id))
+        .map((c) => ({ ...c, application: mine.get(c.id) ?? null, withdrawn: !mine.has(c.id) && withdrawn.has(c.id) })),
+    );
+  }),
+);
+
+// The live part of the candidate's dashboard, polled every few seconds: their own applications
+// with their place in each queue, and what each of those desks is doing. A few hundred bytes,
+// where the full company list (/companies) is tens of kilobytes and is only reloaded now and then.
+router.get(
+  '/me/queue',
+  requireCandidate,
+  wrap(async (req, res) => {
+    const rows = await applications.find({ candidate_id: req.candidate.id }, { projection: { ...APPLICATION_OUT, company_id: 1 } }).toArray();
+    if (!rows.length) return res.json([]);
+    const list = await allCompanies();
+    const byId = new Map(list.map((c) => [c.id, c]));
+    res.json(
+      await Promise.all(
+        rows.map(async ({ company_id, ...application }) => {
+          const c = byId.get(company_id) ?? {};
+          return {
+            id: company_id,
+            room_no: c.room_no ?? '',
+            now_serving: c.now_serving ?? 0,
+            now_serving_started: Boolean(c.now_serving_started),
+            now_serving_done: Boolean(c.now_serving_done),
+            on_break: c.on_break ?? null,
+            application: { ...application, queue: await queuePlace({ ...application, company_id }, c.now_serving ?? 0) },
+          };
+        }),
+      ),
+    );
   }),
 );
 
@@ -792,7 +1128,7 @@ router.get(
     const page = await companyPage(id, found);
     if (!page) return res.status(404).json({ error: 'This company is not in the list' });
     const application = found ? { ...found, queue: await queuePlace({ ...found, company_id: id }, page.now_serving ?? 0) } : null;
-    res.json({ ...page, application });
+    res.json({ ...page, application, withdrawn: !found && (req.candidate.withdrawn_from ?? []).includes(id) });
   }),
 );
 
@@ -810,9 +1146,18 @@ router.post(
       NO_ID,
     );
     if (!company) return res.status(404).json({ error: 'This company is no longer in the list' });
+    // Applications open once the company has its desk (it scanned the desk QR code, or the
+    // organisers placed it): a candidate's token is for a desk they can walk to.
+    if (!company.room_no) {
+      return res.status(409).json({ error: 'This company has not reached its desk yet. You can apply as soon as its desk number shows.' });
+    }
 
     const already = () => res.status(409).json({ error: 'You have already applied to this company' });
     if (await applications.findOne({ candidate_id: candidateId, company_id: company.id })) return already();
+    // One application per company, ever: withdrawing does not open the door to applying again.
+    if ((req.candidate.withdrawn_from ?? []).includes(company.id)) {
+      return res.status(409).json({ error: 'You withdrew your application to this company, so you cannot apply again' });
+    }
     const limit = Number(settings.max_applications) || 0;
     if (limit > 0) {
       const used = await applications.countDocuments({ candidate_id: candidateId });
@@ -870,6 +1215,7 @@ router.post(
     if (duplicate) return already();
     if (!application) return res.status(503).json({ error: 'Many people are applying right now. Please try again.' });
     bumpApplicants(company.id, 1);
+    alertUpcoming(company.id); // a short queue: this candidate may already be among the next three
     const { id, token_no, status, created_at } = application;
     const queue = await queuePlace(application, company.now_serving ?? 0);
     res.status(201).json({ id, role, token_no, status, created_at, called_at: null, queue });
@@ -945,7 +1291,9 @@ router.delete(
       return res.status(400).json({ error: 'This application is already being processed and cannot be withdrawn' });
     }
     await applications.deleteOne({ id: row.id });
+    await candidates.updateOne({ id: req.candidate.id }, { $addToSet: { withdrawn_from: row.company_id } });
     bumpApplicants(row.company_id, -1);
+    alertUpcoming(row.company_id);
     res.json({ ok: true });
   }),
 );
@@ -1003,6 +1351,11 @@ async function overviewCharts(appliedIds, named) {
   ]);
 
   const today = localParts(new Date().toISOString().replace('T', ' ').slice(0, 19)).day;
+  // The job fair is one day: the hour-by-hour charts show that day (the fair date in Settings),
+  // or today when no date is set. Everything before it is counted once, as "before the fair day".
+  const fairDate = (await getSettings()).fair_date;
+  const chartDay = /^\d{4}-\d{2}-\d{2}$/.test(fairDate || '') ? fairDate : today;
+  const before = { registrations: 0, applications: 0 };
   const byDay = new Map();
   const byHour = Array.from({ length: 24 }, () => 0);
   const ages = { 'Under 20': 0, '20–24': 0, '25–29': 0, '30–34': 0, '35+': 0 };
@@ -1012,7 +1365,8 @@ async function overviewCharts(appliedIds, named) {
     if (r.created_at) {
       const { day, hour } = localParts(r.created_at);
       byDay.set(day, (byDay.get(day) || 0) + 1);
-      if (day === today) byHour[hour] += 1;
+      if (day === chartDay) byHour[hour] += 1;
+      else if (day < chartDay) before.registrations += 1;
     }
     const dob = /^\d{4}-\d{2}-\d{2}$/.test(r.dob || '') ? Date.parse(`${r.dob}T00:00:00Z`) : NaN;
     if (!Number.isNaN(dob)) {
@@ -1028,7 +1382,8 @@ async function overviewCharts(appliedIds, named) {
     if (!a.created_at) continue;
     const { day, hour } = localParts(a.created_at);
     appsByDay.set(day, (appsByDay.get(day) || 0) + 1);
-    if (day === today) appsByHour[hour] += 1;
+    if (day === chartDay) appsByHour[hour] += 1;
+    else if (day < chartDay) before.applications += 1;
   }
   for (const d of appsByDay.keys()) if (!byDay.has(d)) byDay.set(d, 0);
   // Year of passing: the last 8 years one by one, older ones together.
@@ -1066,6 +1421,8 @@ async function overviewCharts(appliedIds, named) {
     registrations_by_day: timeline,
     registrations_today_by_hour: byHour,
     applications_today_by_hour: appsByHour,
+    chart_day: chartDay,
+    before_chart_day: before,
     passing_year: passing,
     experience: Object.entries(exp).map(([label, value]) => ({ label, value })),
     today,
@@ -1156,6 +1513,92 @@ router.get(
 );
 
 // Companies
+
+// ── Live desk control ──
+// One page for the day itself: the fair-wide switches, and every company's desk with its status.
+const CONTROL_KEYS = ['registration_open', 'company_registration_open', 'applications_open', 'interviews_open'];
+const controlsOut = (st) => Object.fromEntries(CONTROL_KEYS.map((k) => [k, st[k] !== '0']));
+
+// The switches alone, for every open page to check often (small and cheap), so turning
+// registration or applications off takes effect on screens without a reload.
+router.get('/public/switches', wrap(async (req, res) => res.json(controlsOut(await getSettings()))));
+
+router.get(
+  '/admin/desks',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const [rows, waiting, total, st] = await Promise.all([
+      companies
+        .find({ name: { $ne: '' } }, { projection: { _id: 0, id: 1, name: 1, room_no: 1, location: 1, active: 1, on_break: 1, break_since: 1, now_serving: 1, now_serving_done: 1, now_serving_started: 1 } })
+        .toArray(),
+      countBy(applications, 'company_id', { status: 'applied', called_at: null }),
+      countBy(applications, 'company_id'),
+      getSettings(),
+    ]);
+    const desks = rows
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        room_no: r.room_no || '',
+        location: r.location || '',
+        active: Boolean(r.active),
+        on_break: breakKind(r.on_break),
+        break_since: breakKind(r.on_break) ? r.break_since ?? null : null,
+        now_serving: r.now_serving ?? 0,
+        now_serving_live: Boolean(r.now_serving_started) && !r.now_serving_done,
+        waiting: waiting.get(r.id) ?? 0,
+        applicants: total.get(r.id) ?? 0,
+      }))
+      .sort((a, b) => (Number.parseInt(a.room_no, 10) || 1e9) - (Number.parseInt(b.room_no, 10) || 1e9) || nocase(a.name, b.name));
+    res.json({ controls: controlsOut(st), desks });
+  }),
+);
+
+// Flips one fair-wide switch without touching the other settings.
+router.put(
+  '/admin/controls',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const key = String(req.body?.key ?? '');
+    if (!CONTROL_KEYS.includes(key)) return res.status(400).json({ error: 'Unknown control' });
+    const on = !isOff(req.body?.on);
+    const before = (await getSettings())[key] !== '0';
+    await setSetting(key, on ? '1' : '0');
+    // Tell the people it affects, when asked to and when it really changed.
+    let alerted = null;
+    const alert = SWITCH_ALERTS[key];
+    if (alert && req.body?.notify === true && before !== on) {
+      const [title, body] = alert[on ? 'on' : 'off'];
+      const row = await announce({ title, body, toCandidates: alert.candidates, toCompanies: alert.companies });
+      alerted = { title, pushed: row.pushed };
+    }
+    res.json({ controls: controlsOut(await getSettings()), alerted });
+  }),
+);
+
+// The organisers start or end a break for one desk.
+router.put(
+  '/admin/companies/:id/break',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const id = toId(req.params.id);
+    if (!(await companies.findOne({ id, name: { $ne: '' } }))) return res.status(404).json({ error: 'Company not found' });
+    await setBreak({ id }, breakKind(req.body?.kind), 'admin');
+    if (!breakKind(req.body?.kind)) alertUpcoming(id);
+    res.json({ ok: true });
+  }),
+);
+
+// ... or for every company at once (lunch for everyone, and back to interviews).
+router.post(
+  '/admin/break-all',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const changed = await setBreak({ name: { $ne: '' } }, breakKind(req.body?.kind), 'admin-all');
+    if (!breakKind(req.body?.kind)) for (const id of await companies.distinct('id', { name: { $ne: '' } })) alertUpcoming(id);
+    res.json({ ok: true, changed });
+  }),
+);
 
 router.get(
   '/admin/companies',
@@ -1478,6 +1921,7 @@ function applicationPipeline(query, { byToken = false } = {}) {
   const companyId = toId(query.company);
   if (companyId) match.company_id = companyId;
   if (STATUSES.includes(query.status)) match.status = query.status;
+  else if (query.status === 'done') match.status = { $ne: 'applied' }; // every candidate with a result
   const q = clean(query.q, 80);
   if (q) {
     const reg = /^jf-?0*(\d{1,9})$/i.exec(q);
@@ -1565,6 +2009,7 @@ router.put(
     const application = await applications.findOneAndUpdate({ id: toId(req.params.id) }, { $set: { status, updated_at: now() } });
     if (!application) return res.status(404).json({ error: 'Application not found' });
     await resultGiven(application.company_id, application.token_no, status);
+    statusAlert(application, status);
     res.json({ ok: true, status });
   }),
 );
@@ -1712,8 +2157,8 @@ router.put(
     if (next.fair_name.length < 2) errors.fair_name = 'Enter the job fair name';
     next.fair_date = clean(body.fair_date, 10);
     if (next.fair_date && !/^\d{4}-\d{2}-\d{2}$/.test(next.fair_date)) errors.fair_date = 'Choose a valid date';
-    next.registration_open = isOff(body.registration_open) ? '0' : '1';
-    next.applications_open = isOff(body.applications_open) ? '0' : '1';
+    // The on/off switches (registration, applications, interviews) are changed on the Desk control
+    // page (PUT /admin/controls), not here, so saving the settings never flips them back.
     const limit = Number.parseInt(body.max_applications, 10) || 0;
     if (limit < 0 || limit > 500) errors.max_applications = 'Enter a number between 0 and 500';
     next.max_applications = String(limit);
@@ -1764,8 +2209,9 @@ async function recruiterCounts(companyId) {
 router.post(
   '/recruiter/login',
   wrap(async (req, res) => {
+    // Sized for every desk in the hall sharing the venue Wi-Fi. A code has over a million million possibilities.
     const key = `r|${req.ip}`;
-    if (tooManyAttempts(key, 40)) {
+    if (tooManyAttempts(key, 300)) {
       return res.status(429).json({ error: 'Too many wrong attempts. Please try again after 15 minutes.' });
     }
     const code = normCode(req.body?.code);
@@ -1832,7 +2278,11 @@ async function companyLinkOk(req, res) {
 router.get(
   '/public/company-register/:code',
   wrap(async (req, res) => {
-    if (await companyLinkOk(req, res)) res.json({ ok: true });
+    if (!(await companyLinkOk(req, res))) return;
+    if ((await getSettings()).company_registration_open === '0') {
+      return res.status(403).json({ error: 'Company registration is closed right now. Please contact the organisers at the help desk.', closed: true });
+    }
+    res.json({ ok: true });
   }),
 );
 
@@ -1840,6 +2290,9 @@ router.post(
   '/public/company-register/:code',
   wrap(async (req, res) => {
     if (!(await companyLinkOk(req, res))) return;
+    if ((await getSettings()).company_registration_open === '0') {
+      return res.status(403).json({ error: 'Company registration is closed right now. Please contact the organisers at the help desk.' });
+    }
     const body = req.body ?? {};
     const { values } = validateCompany({ name: body.name, industry: body.industry });
     const refuse = (status, error) => res.status(status).json({ error, fields: { name: error } });
@@ -1849,12 +2302,10 @@ router.post(
     if (await companies.findOne({ name: sameText(values.name) })) {
       return refuse(409, 'This company is already registered. To open its dashboard, use its access code: ask your colleague, or the organisers at the help desk.');
     }
-    // The desk number and the floor can be given straight away, by a company that is already at its desk.
-    const wanted = clean(body.room_no, 20);
-    const found = wanted ? await deskByNumber(wanted, 0) : { desk: null };
-    if (found.error) return res.status(400).json({ error: found.error, fields: { room_no: found.error } });
-    values.room_no = found.desk ? found.desk.room_no : wanted;
-    values.location = floorText(body.location) || found.desk?.location || '';
+    // No desk yet: straight after registering, the company scans the QR code at its desk.
+    const found = { desk: null };
+    values.room_no = '';
+    values.location = '';
     let id;
     try {
       // The desk is taken in the same step as the company is added, so a desk that another company
@@ -1896,7 +2347,10 @@ router.post(
       }
       desk = await companies.findOne({ id: Number(link[1]) }, { projection: { _id: 0, id: 1, name: 1, room_no: 1, location: 1 } });
       if (!desk) return res.status(404).json({ error: 'This desk QR code is not in use any more. Please ask the organisers for a new poster.' });
-      if (desk.id === company.id) return res.json({ company: await recruiterCompany(company) }); // its own QR code
+      if (desk.id === company.id) {
+        // Its own QR code (a desk the organisers gave it): scanning it opens the desk work.
+        return res.json({ company: await recruiterCompany(company), at_desk: true, token: recruiterToken(company, company.id) });
+      }
       if (desk.name !== '') {
         return res.status(409).json({ error: `That QR code belongs to ${desk.name}. Scan the QR code on the poster at your own interview desk.` });
       }
@@ -1928,7 +2382,14 @@ router.post(
     }
     if (problem) return res.status(409).json({ error: problem });
     dropCompanyCache();
-    res.json({ company: await recruiterCompany(await findCompany(company.id)) });
+    const updated = await findCompany(company.id);
+    // Only a scanned QR code proves the company is at its desk; a typed desk number does not.
+    const scannedHere = Boolean(qr) || req.atDesk;
+    res.json({
+      company: await recruiterCompany(updated),
+      at_desk: scannedHere,
+      ...(scannedHere ? { token: recruiterToken(updated, deskOf(updated)) } : {}),
+    });
   }),
 );
 
@@ -1986,6 +2447,7 @@ router.get(
       counts: await recruiterCounts(req.company.id),
       queue: await queueOf(req.company.id),
       access_code: req.company.access_code,
+      at_desk: req.atDesk,
     });
   }),
 );
@@ -1997,6 +2459,7 @@ router.get(
 router.put(
   '/recruiter/company',
   requireRecruiter,
+  requireAtDesk,
   wrap(async (req, res) => {
     const body = req.body ?? {};
     const company = req.company;
@@ -2099,6 +2562,7 @@ router.put(
 router.get(
   '/recruiter/applications',
   requireRecruiter,
+  requireAtDesk,
   wrap(async (req, res) => {
     // The company always comes from the login, never from the request.
     const limit = Math.min(2000, Math.max(1, Number.parseInt(req.query.limit, 10) || 100));
@@ -2106,7 +2570,7 @@ router.get(
     const { rows, total } = await findApplications(
       { company: req.company.id, status: req.query.status, q: req.query.q },
       { byToken: true },
-      ['id', 'role', 'token_no', 'status', 'created_at', 'called_at', 'interview', 'candidate_id', ...PERSON_FIELDS, 'dob', 'preferred_role'],
+      ['id', 'role', 'token_no', 'rescheduled_from', 'status', 'created_at', 'called_at', 'interview', 'candidate_id', ...PERSON_FIELDS, 'dob', 'preferred_role'],
       { offset, limit, count: true },
     );
     res.json({
@@ -2122,6 +2586,7 @@ router.get(
 router.get(
   '/recruiter/applications/:id',
   requireRecruiter,
+  requireAtDesk,
   wrap(async (req, res) => {
     const application = await applications.findOne({ id: toId(req.params.id), company_id: req.company.id }, NO_ID);
     if (!application) return res.status(404).json({ error: 'This candidate did not apply to your company' });
@@ -2139,6 +2604,7 @@ router.get(
 router.put(
   '/recruiter/questions',
   requireRecruiter,
+  requireAtDesk,
   wrap(async (req, res) => {
     const body = req.body ?? {};
     if (body.reset) {
@@ -2169,7 +2635,10 @@ router.put(
 router.post(
   '/recruiter/applications/:id/start',
   requireRecruiter,
+  requireAtDesk,
+  requireInterviewsOpen,
   wrap(async (req, res) => {
+    if (refuseOnBreak(req.company, res)) return;
     const application = await applications.findOne({ id: toId(req.params.id), company_id: req.company.id }, NO_ID);
     if (!application) return res.status(404).json({ error: 'Application not found' });
     await applications.updateOne({ id: application.id, 'interview.started_at': { $exists: false } }, { $set: { 'interview.started_at': now() } });
@@ -2183,6 +2652,8 @@ router.post(
 router.put(
   '/recruiter/applications/:id/interview',
   requireRecruiter,
+  requireAtDesk,
+  requireInterviewsOpen,
   wrap(async (req, res) => {
     const application = await applications.findOne({ id: toId(req.params.id), company_id: req.company.id }, NO_ID);
     if (!application) return res.status(404).json({ error: 'Application not found' });
@@ -2208,6 +2679,7 @@ router.put(
       { $set: { interview, status, updated_at: t, called_at: application.called_at ?? t } },
     );
     await resultGiven(req.company.id, application.token_no, status);
+    statusAlert(application, status);
     res.json({
       status,
       interview: interviewOut(interview),
@@ -2220,13 +2692,16 @@ router.put(
 router.put(
   '/recruiter/applications/:id',
   requireRecruiter,
+  requireAtDesk,
+  requireInterviewsOpen,
   wrap(async (req, res) => {
     const status = String(req.body?.status ?? '');
     if (!STATUSES.includes(status)) return res.status(400).json({ error: 'Unknown status' });
     const id = toId(req.params.id);
     const t = now();
-    const result = await applications.updateOne({ id, company_id: req.company.id }, { $set: { status, updated_at: t } });
-    if (!result.matchedCount) return res.status(404).json({ error: 'Application not found' });
+    const before = await applications.findOneAndUpdate({ id, company_id: req.company.id }, { $set: { status, updated_at: t } });
+    if (!before) return res.status(404).json({ error: 'Application not found' });
+    statusAlert(before, status);
     // A candidate who has a result has been seen, so they are no longer "missed".
     if (status !== 'applied') await applications.updateOne({ id, called_at: null }, { $set: { called_at: t } });
     const changed = await applications.findOne({ id }, { projection: { _id: 0, token_no: 1 } });
@@ -2240,7 +2715,10 @@ router.put(
 router.post(
   '/recruiter/queue/next',
   requireRecruiter,
+  requireAtDesk,
+  requireInterviewsOpen,
   wrap(async (req, res) => {
+    if (refuseOnBreak(req.company, res)) return;
     const company = await findCompany(req.company.id);
     const next = await applications.findOne(
       { ...waitingFilter(company.id), token_no: { $gt: company.now_serving ?? 0 } },
@@ -2257,7 +2735,10 @@ router.post(
 router.post(
   '/recruiter/applications/:id/call',
   requireRecruiter,
+  requireAtDesk,
+  requireInterviewsOpen,
   wrap(async (req, res) => {
+    if (refuseOnBreak(req.company, res)) return;
     const application = await applications.findOne({ id: toId(req.params.id), company_id: req.company.id }, NO_ID);
     if (!application) return res.status(404).json({ error: 'Application not found' });
     await callIn(application);
@@ -2265,9 +2746,218 @@ router.post(
   }),
 );
 
+// Interviews can be paused by the organisers (Settings): calling, starting, saving and giving results stop.
+async function requireInterviewsOpen(req, res, next) {
+  try {
+    if ((await getSettings()).interviews_open === '0') {
+      return res.status(403).json({ error: 'Interviews are paused by the organisers right now.', code: 'interviews_closed' });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+// The queue as a picture: every token of the company with the stage it is at, from in line to done,
+// and the average interview length so the board can estimate each token's wait.
+async function boardOf(companyId) {
+    const company = await companies.findOne({ id: companyId }, { projection: { _id: 0, name: 1, room_no: 1, location: 1, now_serving: 1, now_serving_started: 1, now_serving_done: 1, on_break: 1, break_since: 1 } });
+    const serving = company?.now_serving ?? 0;
+    const rows = await applications
+      .find({ company_id: companyId }, { projection: { _id: 0, id: 1, candidate_id: 1, token_no: 1, status: 1, called_at: 1, rescheduled_from: 1, interview: 1 } })
+      .sort({ token_no: 1 })
+      .toArray();
+    const names = new Map(
+      (await candidates.find({ id: { $in: rows.map((r) => r.candidate_id) } }, { projection: { _id: 0, id: 1, full_name: 1 } }).toArray()).map((c) => [c.id, c.full_name]),
+    );
+    const minutes = [];
+    let line = 0; // place among the waiting tokens: 0 and 1 wait at the desk, 2 gets ready
+    const tokens = rows.map((r) => {
+      let state;
+      if (r.status !== 'applied') state = 'done';
+      else if (r.called_at && r.token_no === serving) state = 'now';
+      else if (r.called_at || r.token_no < serving) state = 'missed';
+      else {
+        state = line < 2 ? 'desk' : line === 2 ? 'ready' : 'waiting';
+        line += 1;
+      }
+      const iv = r.interview;
+      if (state === 'done' && iv?.started_at && iv?.saved_at) {
+        const m = (Date.parse(`${iv.saved_at.replace(' ', 'T')}Z`) - Date.parse(`${iv.started_at.replace(' ', 'T')}Z`)) / 60000;
+        if (m > 0 && m < 180) minutes.push(m);
+      }
+      return {
+        id: r.id,
+        token_no: r.token_no,
+        name: names.get(r.candidate_id) ?? '',
+        state,
+        place: state === 'desk' || state === 'ready' || state === 'waiting' ? line : null,
+        result: r.status,
+        rescheduled_from: r.rescheduled_from ?? null,
+        started: Boolean(iv?.started_at),
+      };
+    });
+    return {
+      name: company?.name ?? '',
+      room_no: company?.room_no ?? '',
+      location: company?.location ?? '',
+      now_serving: serving,
+      now_live: Boolean(company?.now_serving_started) && !company?.now_serving_done,
+      on_break: breakKind(company?.on_break),
+      break_since: breakKind(company?.on_break) ? company.break_since ?? null : null,
+      avg_minutes: minutes.length ? Math.round((minutes.reduce((a, b) => a + b, 0) / minutes.length) * 10) / 10 : null,
+      tokens,
+    };
+}
+
+router.get('/recruiter/queue/board', requireRecruiter, requireAtDesk, wrap(async (req, res) => res.json(await boardOf(req.company.id))));
+
+// The organisers watch any company's queue, live, the way the company sees it.
+router.get(
+  '/admin/companies/:id/board',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const id = toId(req.params.id);
+    if (!(await companies.findOne({ id, name: { $ne: '' } }, { projection: { _id: 1 } }))) return res.status(404).json({ error: 'Company not found' });
+    res.json(await boardOf(id));
+  }),
+);
+
+// The company's dashboard: its own numbers and charts, for its candidates only.
+router.get(
+  '/recruiter/stats',
+  requireRecruiter,
+  requireAtDesk,
+  wrap(async (req, res) => {
+    const companyId = req.company.id;
+    const [rows, st] = await Promise.all([
+      applications
+        .find({ company_id: companyId }, { projection: { _id: 0, candidate_id: 1, role: 1, status: 1, created_at: 1, interview: 1 } })
+        .toArray(),
+      getSettings(),
+    ]);
+    const people = await candidates
+      .find({ id: { $in: rows.map((r) => r.candidate_id) } }, { projection: { _id: 0, qualification: 1, gender: 1, experience_type: 1, experience_years: 1 } })
+      .toArray();
+
+    // The fair is one day: the hour-by-hour charts show the fair date from Settings, or today.
+    const today = localParts(new Date().toISOString().replace('T', ' ').slice(0, 19)).day;
+    const chartDay = /^\d{4}-\d{2}-\d{2}$/.test(st.fair_date || '') ? st.fair_date : today;
+    const appliedByHour = Array.from({ length: 24 }, () => 0);
+    const doneByHour = Array.from({ length: 24 }, () => 0);
+    const scores = [];
+    const minutes = [];
+    for (const r of rows) {
+      if (r.created_at) {
+        const { day, hour } = localParts(r.created_at);
+        if (day === chartDay) appliedByHour[hour] += 1;
+      }
+      const iv = r.interview;
+      if (r.status !== 'applied' && iv?.saved_at) {
+        const { day, hour } = localParts(iv.saved_at);
+        if (day === chartDay) doneByHour[hour] += 1;
+        if (iv.started_at) {
+          const m = (Date.parse(`${iv.saved_at.replace(' ', 'T')}Z`) - Date.parse(`${iv.started_at.replace(' ', 'T')}Z`)) / 60000;
+          if (m > 0 && m < 180) minutes.push(m); // an interview left open for hours is not counted
+        }
+      }
+      const score = interviewOut(iv)?.score;
+      if (score != null) scores.push(score);
+    }
+    const bands = [
+      ['Excellent (4.5+)', (x) => x >= 4.5],
+      ['Good (3.5–4.4)', (x) => x >= 3.5 && x < 4.5],
+      ['Average (2.5–3.4)', (x) => x >= 2.5 && x < 3.5],
+      ['Below average', (x) => x < 2.5],
+    ].map(([label, test]) => ({ label, value: scores.filter(test).length }));
+    const exp = { Fresher: 0, 'Under 1 yr': 0, '1–2 yrs': 0, '3–5 yrs': 0, '6+ yrs': 0 };
+    for (const p of people) {
+      const y = Number(p.experience_years) || 0;
+      exp[p.experience_type !== 'experienced' ? 'Fresher' : y < 1 ? 'Under 1 yr' : y <= 2 ? '1–2 yrs' : y <= 5 ? '3–5 yrs' : '6+ yrs'] += 1;
+    }
+    const avg = (list) => (list.length ? Math.round((list.reduce((a, b) => a + b, 0) / list.length) * 10) / 10 : null);
+    res.json({
+      counts: await recruiterCounts(companyId),
+      chart_day: chartDay,
+      today,
+      applied_by_hour: appliedByHour,
+      done_by_hour: doneByHour,
+      by_role: topCounts(rows.map((r) => r.role || 'Any role'), 8),
+      score_bands: bands,
+      avg_score: avg(scores),
+      avg_minutes: avg(minutes),
+      qualification: topCounts(people.map((p) => p.qualification), 6),
+      gender: topCounts(people.map((p) => p.gender), 4),
+      experience: Object.entries(exp).map(([label, value]) => ({ label, value })),
+      queue: await queueOf(companyId),
+    });
+  }),
+);
+
+// The company starts or ends a break at its desk. kind: 'break' | 'lunch' | null (back to interviewing).
+router.post(
+  '/recruiter/break',
+  requireRecruiter,
+  requireAtDesk,
+  wrap(async (req, res) => {
+    const kind = breakKind(req.body?.kind);
+    await setBreak({ id: req.company.id }, kind);
+    if (!kind) alertUpcoming(req.company.id); // back from the break: the next ones are told
+    res.json({ ok: true, queue: await queueOf(req.company.id) });
+  }),
+);
+
+// Reschedules a candidate who was not there when their token came (missed, or at the desk now but
+// not turned up): they get a new token at the end of the queue and wait again like everyone else.
+router.post(
+  '/recruiter/applications/:id/reschedule',
+  requireRecruiter,
+  requireAtDesk,
+  requireInterviewsOpen,
+  wrap(async (req, res) => {
+    const companyId = req.company.id;
+    const application = await applications.findOne({ id: toId(req.params.id), company_id: companyId }, NO_ID);
+    if (!application) return res.status(404).json({ error: 'Application not found' });
+    if (application.status !== 'applied') return res.status(400).json({ error: 'This candidate already has a result' });
+    const company = await findCompany(companyId);
+    const serving = company.now_serving ?? 0;
+    const atDesk = application.token_no === serving;
+    if (!atDesk && !application.called_at && application.token_no > serving) {
+      return res.status(400).json({ error: 'This token is still waiting its turn' });
+    }
+    const mine = await applications.distinct('token_no', { candidate_id: application.candidate_id, company_id: { $ne: companyId }, status: 'applied' });
+    let token_no = 0;
+    await oneAtATime(companyId, async () => {
+      token_no = await takeToken(companyId, mine);
+      if (!token_no) return;
+      const t = now();
+      await applications.updateOne(
+        { id: application.id },
+        { $set: { token_no, called_at: null, rescheduled_from: application.token_no, updated_at: t }, $unset: { alerted: '' } },
+      );
+    });
+    if (!token_no) return res.status(503).json({ error: 'Could not give a new token. Please try again.' });
+    waitingCache.delete(companyId);
+    // The desk is free again if this was the token being served.
+    if (atDesk) {
+      await companies.updateOne({ id: companyId, now_serving: serving }, { $set: { now_serving_done: true, now_serving_started: false } });
+      patchCachedCompany(companyId, { now_serving_done: true, now_serving_started: false });
+    }
+    notify(application.candidate_id, {
+      title: `New token ${token_no} at ${company.name}`,
+      body: `You were not at the desk for token ${application.token_no}, so you were moved to the end of the line. We will alert you again before your turn.`,
+      url: `/c/${companyId}`,
+      tag: `moved-${application.id}`,
+    });
+    alertUpcoming(companyId);
+    res.json({ ok: true, old_token: application.token_no, token_no, queue: await queueOf(companyId) });
+  }),
+);
+
 router.get(
   '/recruiter/export',
   requireRecruiter,
+  requireAtDesk,
   wrap(async (req, res) => {
     const { rows } = await findApplications({ company: req.company.id }, {}, [...EXPORT_FIELDS, 'interview']);
     const name = req.company.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'company';

@@ -60,7 +60,7 @@ export default function App() {
         <Route path="/r/:code" element={<CompanyRegister />} />
         <Route path="/company/login" element={<CompanyLogin />} />
         <Route
-          path="/company"
+          path="/company/*"
           element={
             <CompanyOnly>
               <CompanyDashboard />

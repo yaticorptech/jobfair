@@ -129,13 +129,13 @@ function Fact({ label, children }) {
 
 function ScoreBox({ score, rated, total, className }) {
   return (
-    <div className={cx('rounded-2xl bg-slate-900 px-4 py-3 text-white', className)} aria-live="polite">
-      <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Overall score</p>
+    <div className={cx('rounded-2xl bg-blue-50 px-4 py-3 text-slate-900 ring-1 ring-inset ring-blue-200', className)} aria-live="polite">
+      <p className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600">Overall score</p>
       <p className="mt-0.5 flex items-baseline gap-2">
         <span className="text-3xl font-extrabold leading-none tabular-nums">{score == null ? '–' : scoreText(Math.round(score * 10) / 10)}</span>
-        <span className="text-sm font-semibold text-slate-300">{scoreWord(score)}</span>
+        <span className="text-sm font-semibold text-slate-600">{scoreWord(score)}</span>
       </p>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="mt-1 text-xs text-slate-500">
         {rated} of {total} questions rated
       </p>
     </div>
@@ -187,7 +187,7 @@ export default function Interview() {
       const body = { ratings: rated.map((q) => ({ id: q.id, text: q.text, rating: ratings[q.id] })), notes, status: result };
       const answer = await api(`/recruiter/applications/${row.id}/interview`, { method: 'PUT', body });
       toast(`${row.full_name}: ${STATUS[answer.status].label}${answer.interview.score != null ? ` · ${scoreText(answer.interview.score)}` : ''}`);
-      navigate('/company');
+      navigate('/company/candidates');
     } catch (err) {
       toast(err.message, 'error');
       setBusy(false);
@@ -200,7 +200,7 @@ export default function Interview() {
     <div className="min-h-dvh bg-slate-50 pb-32 lg:pb-12">
       <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4">
-          <Link to="/company" className="inline-flex min-h-11 items-center gap-2 rounded-full pr-3 text-sm font-bold text-slate-700 hover:text-slate-900">
+          <Link to="/company/candidates" className="inline-flex min-h-11 items-center gap-2 rounded-full pr-3 text-sm font-bold text-slate-700 hover:text-slate-900">
             <ArrowLeft className="size-5" aria-hidden="true" /> Candidates
           </Link>
           <Brand name={info.fair_name} to="/company" />
@@ -373,8 +373,8 @@ export default function Interview() {
       {/* On a phone the score and the save button stay at the bottom of the screen */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
-          <div className="shrink-0 rounded-2xl bg-slate-900 px-3.5 py-1.5 text-center text-white" aria-live="polite">
-            <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Score</p>
+          <div className="shrink-0 rounded-2xl bg-blue-50 px-3.5 py-1.5 text-center text-slate-900 ring-1 ring-inset ring-blue-200" aria-live="polite">
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600">Score</p>
             <p className="text-lg font-extrabold leading-tight tabular-nums">{score == null ? '–' : scoreText(Math.round(score * 10) / 10)}</p>
           </div>
           <Button size="lg" onClick={save} loading={busy} className="flex-1">

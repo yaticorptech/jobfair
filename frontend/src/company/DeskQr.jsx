@@ -1,6 +1,6 @@
 import { ExternalLink, Printer, ScanQrCode } from 'lucide-react';
 import { formatCode, useInfo } from '../lib.jsx';
-import { Button, Card } from '../ui.jsx';
+import { AccessCode, Button, Card } from '../ui.jsx';
 import { Poster } from '../qr.jsx';
 import { siteAddress } from '../admin/shared.jsx';
 
@@ -57,10 +57,7 @@ export default function DeskQr({ company, accessCode, onActivate }) {
             <p className="mt-0.5 text-[15px] text-slate-600">
               Open <span className="break-all font-bold text-slate-900">{site.replace(/^https?:\/\//, '')}/company</span> and enter this access code. Keep the code within your company.
             </p>
-            <div className="mt-4 rounded-2xl bg-slate-900 px-4 py-4 text-center text-white">
-              <p className="text-[11px] font-extrabold uppercase tracking-widest text-amber-300">Access code</p>
-              <p className="mt-1 select-all font-mono text-3xl font-bold tracking-[0.15em]">{formatCode(accessCode)}</p>
-            </div>
+            <AccessCode code={accessCode} shown={formatCode(accessCode)} />
           </Card>
         )}
       </div>

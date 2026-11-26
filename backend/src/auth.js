@@ -64,6 +64,12 @@ export async function requireCandidate(req, res, next) {
   }
 }
 
+// Everything a company does needs its desk first: until it has scanned its desk QR code, nothing else opens.
+export function requireAtDesk(req, res, next) {
+  if (req.atDesk) return next();
+  res.status(403).json({ error: 'First scan the QR code at your desk to activate it.', code: 'scan_desk' });
+}
+
 export function requireAdmin(req, res, next) {
   if (readToken(req)?.role === 'admin') return next();
   res.status(401).json({ error: 'Please log in again' });
@@ -73,9 +79,16 @@ export function requireAdmin(req, res, next) {
 // logs out everyone who used the old one.
 const codeKey = (code) => crypto.createHash('sha256').update(String(code)).digest('hex').slice(0, 16);
 
-export function recruiterToken(company) {
-  return jwt.sign({ role: 'recruiter', id: company.id, k: codeKey(company.access_code) }, SECRET, { expiresIn: '3d' });
+// `desk`: the desk whose QR code the company scanned in this session. Every login starts without one,
+// and the candidates, queue and interviews open only once the company has scanned its desk QR code.
+export function recruiterToken(company, desk = null) {
+  const body = { role: 'recruiter', id: company.id, k: codeKey(company.access_code) };
+  if (desk) body.desk = desk;
+  return jwt.sign(body, SECRET, { expiresIn: '3d' });
 }
+
+// The desk a company sits at: the desk QR code it activated, or (placed by the organisers) its own.
+export const deskOf = (company) => company.desk_id ?? (company.room_no ? company.id : null);
 
 export async function requireRecruiter(req, res, next) {
   try {
@@ -84,6 +97,9 @@ export async function requireRecruiter(req, res, next) {
       const row = await companies.findOne({ id: data.id }, NO_ID);
       if (row && codeKey(row.access_code) === data.k) {
         req.company = row;
+        // A company scans its desk QR code once, straight after registering; from then on that
+        // desk is its own and every login opens the dashboard.
+        req.atDesk = Boolean(deskOf(row));
         return next();
       }
     }

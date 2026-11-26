@@ -3,6 +3,7 @@ import { LogOut, Pencil } from 'lucide-react';
 import { api, experienceText, fmtDate } from '../lib.jsx';
 import { Avatar, Button, Card, useToast } from '../ui.jsx';
 import { CandidateFields, candidateErrors, toForm } from './CandidateFields.jsx';
+import PushCard from './PushCard.jsx';
 
 function Row({ label, children }) {
   return (
@@ -124,6 +125,8 @@ export default function Profile({ me, setMe, onLogout }) {
           <Row label="Looking for">{me.preferred_role}</Row>
         </dl>
       </Card>
+
+      <PushCard settings />
 
       <Button variant="danger" size="lg" className="w-full" onClick={onLogout}>
         <LogOut className="size-5" aria-hidden="true" /> Logout
