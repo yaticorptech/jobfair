@@ -619,9 +619,14 @@ router.post(
       return res.status(400).json({ error: 'Please check the highlighted fields', fields: errors });
     }
 
+    // The AI Course questions on the last step: do they know AI, and if not, would they study it?
+    const aiKnown = ['yes', 'no'].includes(String(req.body.ai_known)) ? String(req.body.ai_known) : '';
+    const aiCourse = aiKnown !== 'yes' && ['yes', 'no'].includes(String(req.body.ai_course)) ? String(req.body.ai_course) : '';
     const row = {
       id: await nextId('candidates'),
       ...values,
+      ai_known: aiKnown,
+      ai_course: aiCourse,
       login_key: newLoginKey(), // there is no password; see auth.js
       resume_file: req.file?.filename ?? null,
       resume_name: req.file ? clean(req.file.originalname, 120) : null,
@@ -637,8 +642,8 @@ router.post(
       throw err;
     }
     // Interested in the Government Certified AI Course: save their details in a separate list.
-    if (String(req.body.ai_course) === 'yes') {
-      const { login_key, resume_file, resume_name, id, created_at, ...details } = row;
+    if (aiCourse === 'yes') {
+      const { login_key, resume_file, resume_name, id, created_at, ai_known, ai_course, ...details } = row;
       await aiCourseLeads.updateOne(
         { candidate_id: id },
         { $setOnInsert: { candidate_id: id, ...details, created_at } },
@@ -1343,7 +1348,7 @@ function topCounts(values, limit) {
 async function overviewCharts(appliedIds, named) {
   const [rows, aiCount, perCandidate, appTimes] = await Promise.all([
     candidates
-      .find({}, { projection: { _id: 0, id: 1, created_at: 1, qualification: 1, gender: 1, experience_type: 1, experience_years: 1, passing_year: 1, city: 1, dob: 1, resume_file: 1, languages: 1 } })
+      .find({}, { projection: { _id: 0, id: 1, created_at: 1, qualification: 1, gender: 1, experience_type: 1, experience_years: 1, passing_year: 1, city: 1, dob: 1, resume_file: 1, languages: 1, ai_known: 1, ai_course: 1 } })
       .toArray(),
     aiCourseLeads.countDocuments(),
     applications.aggregate([{ $group: { _id: '$candidate_id', n: { $sum: 1 } } }, { $group: { _id: '$n', people: { $sum: 1 } } }]).toArray(),
@@ -1431,6 +1436,12 @@ async function overviewCharts(appliedIds, named) {
       applied: rows.filter((r) => applied.has(r.id)).length,
       with_resume: resumes,
       ai_course: aiCount,
+      ai: (() => {
+        const knows = rows.filter((r) => r.ai_known === 'yes').length;
+        const notInterested = rows.filter((r) => r.ai_known === 'no' && r.ai_course === 'no').length;
+        // Registered before the question was asked (only a Yes was kept then, in the AI Course list).
+        return { knows, interested: aiCount, not_interested: notInterested, not_asked: Math.max(0, rows.length - knows - aiCount - notInterested) };
+      })(),
       freshers: rows.filter((r) => r.experience_type !== 'experienced').length,
     },
     applications_per_candidate: [
@@ -1847,6 +1858,8 @@ router.post(
 
 // Candidates
 
+const AI_GROUPS = new Set(['knows', 'interested', 'not_interested', 'not_asked']);
+
 router.get(
   '/admin/candidates',
   requireAdmin,
@@ -1861,6 +1874,18 @@ router.get(
         const cols = ['full_name', 'mobile', 'email', 'qualification', 'specialization', 'skills', 'city'];
         filter = { $or: cols.map((c) => ({ [c]: containing(q) })) };
       }
+    }
+    // One group of the AI Course chart on the overview: ?ai=knows | interested | not_interested | not_asked
+    const ai = String(req.query.ai ?? '');
+    if (AI_GROUPS.has(ai)) {
+      const leadIds = (await aiCourseLeads.find({}, { projection: { _id: 0, candidate_id: 1 } }).toArray()).map((l) => l.candidate_id);
+      const group = {
+        knows: { ai_known: 'yes' },
+        interested: { id: { $in: leadIds } },
+        not_interested: { ai_known: 'no', ai_course: 'no', id: { $nin: leadIds } },
+        not_asked: { ai_known: { $nin: ['yes', 'no'] }, id: { $nin: leadIds } },
+      }[ai];
+      filter = Object.keys(filter).length ? { $and: [filter, group] } : group;
     }
     const [total, rows] = await Promise.all([
       candidates.countDocuments(filter),
@@ -1889,7 +1914,7 @@ router.get(
       .filter((a) => named.has(a.company_id))
       .map(({ company_id, ...a }) => ({ ...a, company_name: named.get(company_id).name, room_no: named.get(company_id).room_no }));
     const aiCourse = Boolean(await aiCourseLeads.findOne({ candidate_id: row.id }, { projection: { _id: 1 } }));
-    res.json({ ...candidateOut(row), ai_course: aiCourse, applications: applied });
+    res.json({ ...candidateOut(row), ai_course: aiCourse, ai_known: row.ai_known || '', applications: applied });
   }),
 );
 

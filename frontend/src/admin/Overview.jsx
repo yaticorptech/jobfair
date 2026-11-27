@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, Building2, ClipboardList, Star, Trophy, TriangleAlert, Users } from 'lucide-react';
-import { STATUS, api, fmtTime } from '../lib.jsx';
+import { ArrowUpRight, Building2, ChevronRight, ClipboardList, Download, Star, Trophy, TriangleAlert, Users } from 'lucide-react';
+import { STATUS, api, download, fmtTime } from '../lib.jsx';
 import { ChartCard, Combo, Donut, LineChart, Ring, VBars } from './charts.jsx';
-import { Button, Card, ErrorNote, Modal, Notice, PageLoader, Pager, rangeLabel, usePaging, useToast } from '../ui.jsx';
+import { Button, Card, ErrorNote, Modal, Notice, PageLoader, Pager, Spinner, rangeLabel, usePaging, useToast } from '../ui.jsx';
+import { CandidateModal } from './Candidates.jsx';
 import { PageTitle, Table, Td } from './shared.jsx';
 
 const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -121,6 +122,9 @@ function Charts({ c, t, companies }) {
         </ChartCard>
       </div>
 
+      <SectionLabel>AI Course</SectionLabel>
+      <AiCourse ai={cand.ai} total={cand.total} />
+
       <SectionLabel>Companies</SectionLabel>
       <div className="grid gap-4 lg:grid-cols-3">
         <ChartCard title="Most applied companies" sub="Top 8 by applications" className="lg:col-span-2">
@@ -141,6 +145,127 @@ function Charts({ c, t, companies }) {
         </ChartCard>
       </div>
     </section>
+  );
+}
+
+// The two AI Course questions on the last step of registration: does the candidate know AI, and if
+// not, would they study the Government Certified AI Course. The interested list downloads as Excel.
+function AiCourse({ ai, total }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const a = ai || { knows: 0, interested: 0, not_interested: 0, not_asked: 0 };
+  const [group, setGroup] = useState(null); // the chart slice whose students are listed
+  const items = [
+    { key: 'interested', label: 'Interested to study', value: a.interested },
+    { key: 'not_interested', label: 'Not interested', value: a.not_interested },
+    { key: 'knows', label: 'Already know AI', value: a.knows },
+    { key: 'not_asked', label: 'Not asked (registered earlier)', value: a.not_asked },
+  ];
+
+  async function exportList() {
+    setBusy(true);
+    try {
+      await download('/admin/export/ai-course', 'ai-course-interested.xlsx');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-3">
+      <ChartCard title="AI Course interest" sub="Answers to the last registration question. Click a group to see its students." className="lg:col-span-2">
+        <Donut items={items} empty="No candidates yet" center="Candidates" onSelect={setGroup} />
+      </ChartCard>
+      {group && <StudentList group={group} onClose={() => setGroup(null)} />}
+      <ChartCard title="AI Course" sub="Click a group to see its students">
+        <ul className="space-y-2">
+          {[
+            { ...items[0], tone: 'bg-emerald-50 text-emerald-800 ring-emerald-200 hover:bg-emerald-100' },
+            { ...items[1], tone: 'bg-rose-50 text-rose-800 ring-rose-200 hover:bg-rose-100' },
+            { ...items[2], tone: 'bg-violet-50 text-violet-800 ring-violet-200 hover:bg-violet-100' },
+            ...(a.not_asked ? [{ ...items[3], label: 'Not asked', tone: 'bg-slate-50 text-slate-700 ring-slate-200 hover:bg-slate-100' }] : []),
+          ].map((g) => (
+            <li key={g.key}>
+              <button
+                type="button"
+                onClick={() => setGroup(items.find((x) => x.key === g.key))}
+                className={`group flex min-h-14 w-full cursor-pointer items-center gap-3 rounded-2xl px-4 py-3 text-left ring-1 ring-inset outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-600 ${g.tone}`}
+              >
+                <span className="min-w-0 flex-1 truncate font-bold">{g.label}</span>
+                <span className="text-2xl font-extrabold tabular-nums">{g.value.toLocaleString('en-IN')}</span>
+                <ChevronRight className="size-4 shrink-0 opacity-50 transition group-hover:translate-x-0.5 group-hover:opacity-100" aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+        <Button variant="secondary" className="mt-5 w-full" onClick={exportList} loading={busy} disabled={a.interested === 0}>
+          {!busy && <Download className="size-4" aria-hidden="true" />} Download interested list
+        </Button>
+      </ChartCard>
+    </div>
+  );
+}
+
+// The students in one group of a chart, 20 at a time. Clicking one opens their full details.
+function StudentList({ group, onClose }) {
+  const PAGE = 20;
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [openId, setOpenId] = useState(null);
+
+  const load = useCallback(() => {
+    setError('');
+    return api(`/admin/candidates?ai=${group.key}&limit=${PAGE}&offset=${(page - 1) * PAGE}`)
+      .then(setData)
+      .catch((err) => setError(err.message));
+  }, [group.key, page]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // The details open in place of the list, and closing them comes back to the list.
+  if (openId) return <CandidateModal id={openId} onClose={() => setOpenId(null)} onChanged={load} />;
+
+  const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1;
+  return (
+    <Modal open wide title={`${group.label} · ${(data?.total ?? group.value).toLocaleString('en-IN')}`} onClose={onClose}>
+      {error ? (
+        <ErrorNote message={error} onRetry={load} />
+      ) : !data ? (
+        <div className="grid place-items-center py-10">
+          <Spinner />
+        </div>
+      ) : data.rows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-500">No students in this group.</p>
+      ) : (
+        <>
+          <ul className="divide-y divide-slate-100 rounded-2xl ring-1 ring-slate-200">
+            {data.rows.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => setOpenId(c.id)}
+                  className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-blue-50/60 focus-visible:bg-blue-50 first:rounded-t-2xl last:rounded-b-2xl"
+                >
+                  <span className="w-16 shrink-0 text-xs font-bold text-blue-700">{c.reg_no}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-bold text-slate-900">{c.full_name}</span>
+                    <span className="block truncate text-xs text-slate-500">{[c.qualification, c.city].filter(Boolean).join(' · ')}</span>
+                  </span>
+                  <span className="hidden shrink-0 text-sm tabular-nums text-slate-600 sm:block">{c.mobile}</span>
+                  <ChevronRight className="size-4 shrink-0 text-slate-300" aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <Pager className="mt-4" page={page} pages={pages} onChange={setPage} label={rangeLabel((page - 1) * PAGE, Math.min(page * PAGE, data.total), data.total, 'Students')} />
+        </>
+      )}
+    </Modal>
   );
 }
 

@@ -400,7 +400,8 @@ const PIE = ['#257de0', '#f47230', '#00b894', '#f2a600', '#ee7fac', '#008a17'];
 const OTHER = '#cbd5e1';
 
 /** Doughnut chart with the total in the middle and a legend beside it. */
-export function Donut({ items, empty, center = 'Total' }) {
+// With onSelect, each slice and legend row can be clicked to open what it counts.
+export function Donut({ items, empty, center = 'Total', onSelect }) {
   const [hover, setHover] = useState(null);
   let list = items.filter((x) => x.value > 0);
   if (!list.length) return <Empty text={empty} />;
@@ -435,7 +436,7 @@ export function Donut({ items, empty, center = 'Total' }) {
                 strokeDashoffset={-at}
                 className="cursor-pointer transition-[stroke-width] duration-200"
                 onMouseEnter={() => setHover(i)}
-                onClick={() => setHover(i)}
+                onClick={() => (onSelect && x.key ? onSelect(x) : setHover(i))}
               />
             );
             at += len;
@@ -451,17 +452,28 @@ export function Donut({ items, empty, center = 'Total' }) {
       </div>
       <ul className="w-full min-w-0 space-y-1.5">
         {list.map((x, i) => (
-          <li
-            key={x.label}
-            className={cx('flex cursor-default items-start gap-2 rounded-lg px-1.5 py-1 text-sm transition-colors', hover === i && 'bg-slate-100')}
-            onMouseEnter={() => setHover(i)}
-          >
-            <span className="mt-1.5 size-2.5 shrink-0 rounded-sm" style={{ background: x.color }} aria-hidden="true" />
-            <span className={cx('min-w-0 flex-1 break-words leading-snug', x.other ? 'text-slate-500' : 'font-semibold text-slate-700')} title={x.label}>
-              {x.label}
-            </span>
-            <span className="shrink-0 font-bold tabular-nums text-slate-900">{fmt(x.value)}</span>
-            <span className="w-9 shrink-0 pt-0.5 text-right text-xs tabular-nums text-slate-400">{pct(x.value, total)}%</span>
+          <li key={x.label} onMouseEnter={() => setHover(i)}>
+            {(() => {
+              const clickable = Boolean(onSelect && x.key);
+              const Row = clickable ? 'button' : 'div';
+              return (
+                <Row
+                  {...(clickable ? { type: 'button', onClick: () => onSelect(x), onFocus: () => setHover(i), 'aria-label': `${x.label}: ${fmt(x.value)}. Show the list` } : {})}
+                  className={cx(
+                    'flex w-full items-start gap-2 rounded-lg px-1.5 py-1 text-left text-sm transition-colors',
+                    clickable ? 'group cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-600' : 'cursor-default',
+                    hover === i && 'bg-slate-100',
+                  )}
+                >
+                  <span className="mt-1.5 size-2.5 shrink-0 rounded-sm" style={{ background: x.color }} aria-hidden="true" />
+                  <span className={cx('min-w-0 flex-1 break-words leading-snug', x.other ? 'text-slate-500' : 'font-semibold text-slate-700', clickable && 'group-hover:underline underline-offset-4')} title={x.label}>
+                    {x.label}
+                  </span>
+                  <span className="shrink-0 font-bold tabular-nums text-slate-900">{fmt(x.value)}</span>
+                  <span className="w-9 shrink-0 pt-0.5 text-right text-xs tabular-nums text-slate-400">{pct(x.value, total)}%</span>
+                </Row>
+              );
+            })()}
           </li>
         ))}
       </ul>
