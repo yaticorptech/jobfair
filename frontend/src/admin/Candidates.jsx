@@ -59,6 +59,7 @@ function CandidateModal({ id, onClose, onChanged }) {
             <Info label="Gender">{c.gender}</Info>
             <Info label="Date of birth">{fmtDate(c.dob, false)}</Info>
             <Info label="City / town">{c.city}</Info>
+            <Info label="Pincode">{c.pincode}</Info>
             <Info label="Registered">{fmtTime(c.created_at)}</Info>
             <Info label="Qualification">{c.qualification}</Info>
             <Info label="Course / stream">{c.specialization}</Info>
@@ -75,6 +76,7 @@ function CandidateModal({ id, onClose, onChanged }) {
             <Info label="Skills">{c.skills}</Info>
             <Info label="Languages">{c.languages}</Info>
             <Info label="Looking for">{c.preferred_role}</Info>
+            <Info label="AI Course">{c.ai_course ? 'Interested' : 'Not interested'}</Info>
           </dl>
 
           <div>

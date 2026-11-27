@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, ClipboardList, Star, Trophy, TriangleAlert, Users } from 'lucide-react';
+import { ArrowUpRight, Building2, ClipboardList, Star, Trophy, TriangleAlert, Users } from 'lucide-react';
 import { STATUS, api, fmtTime } from '../lib.jsx';
 import { ChartCard, Combo, Donut, LineChart, Ring, VBars } from './charts.jsx';
 import { Button, Card, ErrorNote, Modal, Notice, PageLoader, Pager, rangeLabel, usePaging, useToast } from '../ui.jsx';
@@ -78,10 +78,9 @@ function Charts({ c, t, companies }) {
               <p className="text-xs font-bold text-amber-900/70">Registered, not applied</p>
             </div>
           </div>
-          <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-5">
+          <div className="mt-5 grid grid-cols-2 gap-x-3 gap-y-5">
             <Ring label="Have applied" value={cand.applied} total={cand.total} />
             <Ring label="Freshers" value={cand.freshers} total={cand.total} color="#e8650a" />
-            <Ring label="Uploaded a resume" value={cand.with_resume} total={cand.total} color="#6a4ce2" />
           </div>
         </ChartCard>
       </div>
@@ -161,18 +160,23 @@ function Figure({ label, value }) {
 
 // A number tile: the icon and what it counts on top, the number, then one line of detail. Every tile
 // has the same rows, so a row of tiles lines up whatever the numbers are.
-function Tile({ icon: Icon, tone, value, label, sub }) {
+function Tile({ icon: Icon, tone, value, label, sub, to }) {
   return (
-    <Card className="flex h-full flex-col p-4 sm:p-5">
+    <Link
+      to={to}
+      aria-label={`${label}: ${value.toLocaleString('en-IN')}. ${sub}. Open ${label.toLowerCase()}`}
+      className="group flex h-full flex-col rounded-3xl bg-white p-4 shadow-xs ring-1 ring-slate-900/5 outline-none transition duration-200 hover:-translate-y-0.5 hover:shadow-md hover:ring-slate-900/10 focus-visible:ring-2 focus-visible:ring-blue-600 active:translate-y-0 sm:p-5"
+    >
       <div className="flex items-center gap-2.5">
         <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${tone}`}>
           <Icon className="size-5" aria-hidden="true" />
         </span>
-        <p className="min-w-0 truncate text-sm font-bold text-slate-600">{label}</p>
+        <p className="min-w-0 flex-1 truncate text-sm font-bold text-slate-600">{label}</p>
+        <ArrowUpRight className="size-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-slate-600 group-focus-visible:text-slate-600" aria-hidden="true" />
       </div>
       <p className="mt-4 text-[34px] font-extrabold leading-none tracking-tight tabular-nums text-slate-900">{value.toLocaleString('en-IN')}</p>
       <p className="mt-2 min-h-8 text-xs leading-snug text-slate-500">{sub}</p>
-    </Card>
+    </Link>
   );
 }
 
@@ -244,11 +248,11 @@ export default function Overview() {
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5 [&>*:last-child]:col-span-2 sm:[&>*:last-child]:col-span-1">
-        <Tile icon={Users} tone="bg-blue-100 text-blue-700" value={t.candidates} label="Candidates" sub={`${t.applied_candidates.toLocaleString('en-IN')} have applied`} />
-        <Tile icon={Building2} tone="bg-cyan-100 text-cyan-800" value={t.companies} label="Companies" sub={t.empty_desks > 0 ? `${t.empty_desks.toLocaleString('en-IN')} desk QR ${t.empty_desks === 1 ? 'code' : 'codes'} not activated` : 'Every desk QR code is activated'} />
-        <Tile icon={ClipboardList} tone="bg-violet-100 text-violet-800" value={t.applications} label="Applications" sub={`${t.applied.toLocaleString('en-IN')} waiting for interview`} />
-        <Tile icon={Star} tone="bg-amber-100 text-amber-800" value={t.shortlisted} label="Shortlisted" sub={`${pctOf(t.shortlisted, interviewed)}% of ${interviewed.toLocaleString('en-IN')} interviewed`} />
-        <Tile icon={Trophy} tone="bg-emerald-100 text-emerald-800" value={t.selected} label="Selected" sub={`${pctOf(t.selected, interviewed)}% of ${interviewed.toLocaleString('en-IN')} interviewed`} />
+        <Tile icon={Users} tone="bg-blue-100 text-blue-700" value={t.candidates} label="Candidates" to="/admin/candidates" sub={`${t.applied_candidates.toLocaleString('en-IN')} have applied`} />
+        <Tile icon={Building2} tone="bg-cyan-100 text-cyan-800" value={t.companies} label="Companies" to="/admin/companies" sub={t.empty_desks > 0 ? `${t.empty_desks.toLocaleString('en-IN')} desk QR ${t.empty_desks === 1 ? 'code' : 'codes'} not activated` : 'Every desk QR code is activated'} />
+        <Tile icon={ClipboardList} tone="bg-violet-100 text-violet-800" value={t.applications} label="Applications" to="/admin/applications" sub={`${t.applied.toLocaleString('en-IN')} waiting for interview`} />
+        <Tile icon={Star} tone="bg-amber-100 text-amber-800" value={t.shortlisted} label="Shortlisted" to="/admin/applications?status=shortlisted" sub={`${pctOf(t.shortlisted, interviewed)}% of ${interviewed.toLocaleString('en-IN')} interviewed`} />
+        <Tile icon={Trophy} tone="bg-emerald-100 text-emerald-800" value={t.selected} label="Selected" to="/admin/applications?status=selected" sub={`${pctOf(t.selected, interviewed)}% of ${interviewed.toLocaleString('en-IN')} interviewed`} />
       </div>
 
       {data.charts && <Charts c={data.charts} t={t} companies={data.companies} />}

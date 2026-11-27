@@ -1888,7 +1888,8 @@ router.get(
     const applied = list
       .filter((a) => named.has(a.company_id))
       .map(({ company_id, ...a }) => ({ ...a, company_name: named.get(company_id).name, room_no: named.get(company_id).room_no }));
-    res.json({ ...candidateOut(row), applications: applied });
+    const aiCourse = Boolean(await aiCourseLeads.findOne({ candidate_id: row.id }, { projection: { _id: 1 } }));
+    res.json({ ...candidateOut(row), ai_course: aiCourse, applications: applied });
   }),
 );
 
