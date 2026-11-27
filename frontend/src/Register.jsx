@@ -39,28 +39,11 @@ function Choice({ name, question, options, value, error, onChange }) {
   );
 }
 
-// The last screen of registration: does the candidate already know AI? Only if not, would they
-// like to study the Government Certified AI Course? On Yes the server also saves their details in
-// a separate list (ai_course_leads).
+// The last screen of registration: would the candidate like to study the Government Certified AI
+// Course? On Yes the server also saves their details in a separate list (ai_course_leads).
 function AiCourseFields({ v, set, errors }) {
   return (
     <div className="space-y-6 sm:col-span-2">
-      <Choice
-        name="ai_known"
-        question="Do you know AI (Artificial Intelligence)?"
-        options={[
-          { value: 'yes', title: 'Yes, I know AI' },
-          { value: 'no', title: 'No, I don’t' },
-        ]}
-        value={v.ai_known}
-        error={errors.ai_known}
-        onChange={(value) => {
-          set('ai_known', value);
-          if (value === 'yes') set('ai_course', '');
-        }}
-      />
-
-      {v.ai_known === 'no' && (
         <div className="space-y-4">
           <div className="flex items-start gap-3.5 rounded-2xl bg-gradient-to-br from-[#FFF1E2] to-[#E6F5E8] p-4 ring-1 ring-orange-100">
             <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-white text-[#138808] shadow-xs">
@@ -83,7 +66,6 @@ function AiCourseFields({ v, set, errors }) {
             onChange={(value) => set('ai_course', value)}
           />
         </div>
-      )}
     </div>
   );
 }
@@ -92,15 +74,10 @@ function AiCourseFields({ v, set, errors }) {
 // candidates log in with their mobile number alone.
 const STEPS = [
   ...FIELD_GROUPS,
-  { title: 'AI Course', sub: 'One last question before you register', fields: ['ai_known', 'ai_course'], Fields: AiCourseFields },
+  { title: 'AI Course', sub: 'One last question before you register', fields: ['ai_course'], Fields: AiCourseFields },
 ];
 const STEP_COUNT = STEPS.length;
-const aiCourseErrors = (v) =>
-  !v.ai_known
-    ? { ai_known: 'Please choose Yes or No' }
-    : v.ai_known === 'no' && !v.ai_course
-      ? { ai_course: 'Please choose Yes or No' }
-      : {};
+const aiCourseErrors = (v) => (v.ai_course ? {} : { ai_course: 'Please choose Yes or No' });
 
 export default function Register() {
   const { info, refresh: refreshInfo } = useInfo();
@@ -109,7 +86,7 @@ export default function Register() {
   // Set when the candidate came from a desk QR code: they go back to that company afterwards.
   const next = nextPath(useLocation().search);
   const [step, setStep] = useState(0);
-  const [v, setV] = useState(() => ({ ...emptyCandidate, ai_known: '', ai_course: '' }));
+  const [v, setV] = useState(() => ({ ...emptyCandidate, ai_course: '' }));
   const [errors, setErrors] = useState({});
   const [busy, setBusy] = useState(false);
 

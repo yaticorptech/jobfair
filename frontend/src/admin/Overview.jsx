@@ -184,7 +184,7 @@ function AiCourse({ ai, total }) {
           {[
             { ...items[0], tone: 'bg-emerald-50 text-emerald-800 ring-emerald-200 hover:bg-emerald-100' },
             { ...items[1], tone: 'bg-rose-50 text-rose-800 ring-rose-200 hover:bg-rose-100' },
-            { ...items[2], tone: 'bg-violet-50 text-violet-800 ring-violet-200 hover:bg-violet-100' },
+            ...(a.knows ? [{ ...items[2], tone: 'bg-violet-50 text-violet-800 ring-violet-200 hover:bg-violet-100' }] : []),
             ...(a.not_asked ? [{ ...items[3], label: 'Not asked', tone: 'bg-slate-50 text-slate-700 ring-slate-200 hover:bg-slate-100' }] : []),
           ].map((g) => (
             <li key={g.key}>

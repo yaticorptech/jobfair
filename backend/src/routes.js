@@ -619,7 +619,8 @@ router.post(
       return res.status(400).json({ error: 'Please check the highlighted fields', fields: errors });
     }
 
-    // The AI Course questions on the last step: do they know AI, and if not, would they study it?
+    // The AI Course question on the last step. ai_known is kept only for candidates who registered
+    // while "Do you know AI?" was asked first.
     const aiKnown = ['yes', 'no'].includes(String(req.body.ai_known)) ? String(req.body.ai_known) : '';
     const aiCourse = aiKnown !== 'yes' && ['yes', 'no'].includes(String(req.body.ai_course)) ? String(req.body.ai_course) : '';
     const row = {
@@ -1438,7 +1439,7 @@ async function overviewCharts(appliedIds, named) {
       ai_course: aiCount,
       ai: (() => {
         const knows = rows.filter((r) => r.ai_known === 'yes').length;
-        const notInterested = rows.filter((r) => r.ai_known === 'no' && r.ai_course === 'no').length;
+        const notInterested = rows.filter((r) => r.ai_course === 'no').length;
         // Registered before the question was asked (only a Yes was kept then, in the AI Course list).
         return { knows, interested: aiCount, not_interested: notInterested, not_asked: Math.max(0, rows.length - knows - aiCount - notInterested) };
       })(),
@@ -1882,8 +1883,8 @@ router.get(
       const group = {
         knows: { ai_known: 'yes' },
         interested: { id: { $in: leadIds } },
-        not_interested: { ai_known: 'no', ai_course: 'no', id: { $nin: leadIds } },
-        not_asked: { ai_known: { $nin: ['yes', 'no'] }, id: { $nin: leadIds } },
+        not_interested: { ai_course: 'no', id: { $nin: leadIds } },
+        not_asked: { ai_known: { $ne: 'yes' }, ai_course: { $nin: ['yes', 'no'] }, id: { $nin: leadIds } },
       }[ai];
       filter = Object.keys(filter).length ? { $and: [filter, group] } : group;
     }
@@ -1914,7 +1915,7 @@ router.get(
       .filter((a) => named.has(a.company_id))
       .map(({ company_id, ...a }) => ({ ...a, company_name: named.get(company_id).name, room_no: named.get(company_id).room_no }));
     const aiCourse = Boolean(await aiCourseLeads.findOne({ candidate_id: row.id }, { projection: { _id: 1 } }));
-    res.json({ ...candidateOut(row), ai_course: aiCourse, ai_known: row.ai_known || '', applications: applied });
+    res.json({ ...candidateOut(row), ai_course: aiCourse, ai_known: row.ai_known || '', ai_course_answer: row.ai_course || '', applications: applied });
   }),
 );
 

@@ -76,8 +76,7 @@ export function CandidateModal({ id, onClose, onChanged }) {
             <Info label="Skills">{c.skills}</Info>
             <Info label="Languages">{c.languages}</Info>
             <Info label="Looking for">{c.preferred_role}</Info>
-            <Info label="Knows AI">{c.ai_known === 'yes' ? 'Yes' : c.ai_known === 'no' ? 'No' : ''}</Info>
-            <Info label="AI Course">{c.ai_known === 'yes' ? 'Not needed' : c.ai_course ? 'Interested' : c.ai_known === 'no' ? 'Not interested' : ''}</Info>
+            <Info label="AI Course">{c.ai_course ? 'Interested' : c.ai_course_answer === 'no' ? 'Not interested' : c.ai_known === 'yes' ? 'Already knows AI' : ''}</Info>
           </dl>
 
           <div>
