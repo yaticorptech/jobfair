@@ -78,11 +78,10 @@ function Charts({ c, t, companies }) {
               <p className="text-xs font-bold text-amber-900/70">Registered, not applied</p>
             </div>
           </div>
-          <div className="mt-5 grid grid-cols-2 gap-x-3 gap-y-5">
+          <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-5">
             <Ring label="Have applied" value={cand.applied} total={cand.total} />
             <Ring label="Freshers" value={cand.freshers} total={cand.total} color="#e8650a" />
             <Ring label="Uploaded a resume" value={cand.with_resume} total={cand.total} color="#6a4ce2" />
-            <Ring label="Want the AI Course" value={cand.ai_course} total={cand.total} color="#008a17" />
           </div>
         </ChartCard>
       </div>
