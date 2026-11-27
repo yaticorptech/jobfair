@@ -276,6 +276,11 @@ input[type="date"] {
   body {
     background: #fff;
   }
+  /* Keep chart colours and tinted panels when printing or saving as PDF */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
   .poster-slot {
     break-inside: avoid;
   }

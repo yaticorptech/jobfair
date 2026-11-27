@@ -9,7 +9,7 @@ const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
 export function ChartCard({ title, sub, action, className, children }) {
   return (
-    <Card className={cx('flex min-w-0 flex-col p-5', className)}>
+    <Card className={cx('flex min-w-0 flex-col p-5 print:break-inside-avoid print:p-4 print:shadow-none', className)}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-extrabold text-slate-900">{title}</h3>

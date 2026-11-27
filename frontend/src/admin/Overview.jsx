@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, Building2, ChevronRight, ClipboardList, Download, Star, Trophy, TriangleAlert, Users } from 'lucide-react';
-import { STATUS, api, download, fmtTime } from '../lib.jsx';
+import { ArrowUpRight, Building2, ChevronRight, ClipboardList, Download, FileDown, Star, Trophy, TriangleAlert, Users } from 'lucide-react';
+import { STATUS, api, download, fmtTime, useInfo } from '../lib.jsx';
 import { ChartCard, Combo, Donut, LineChart, Ring, VBars } from './charts.jsx';
 import { Button, Card, ErrorNote, Modal, Notice, PageLoader, Pager, Spinner, rangeLabel, usePaging, useToast } from '../ui.jsx';
 import { CandidateModal } from './Candidates.jsx';
@@ -51,15 +51,15 @@ function Charts({ c, t, companies }) {
   const rate = (n, d) => (d ? `${Math.round((n / d) * 100)}%` : '0%');
 
   return (
-    <section className="mt-6 space-y-4" aria-label="Charts">
+    <section className="mt-6 space-y-4 print:mt-4 print:space-y-3" aria-label="Charts">
       {/* The fair day itself: what is coming in, hour by hour, next to who the candidates are */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3 print:grid-cols-3 print:gap-3">
         <ChartCard
-          className="lg:col-span-2"
+          className="lg:col-span-2 print:col-span-2"
           title="Fair day activity"
           sub={`${dayName} · hour by hour · registrations as columns, applications as a line`}
           action={
-            <span className="hidden shrink-0 items-center gap-3 sm:flex">
+            <span className="hidden shrink-0 items-center gap-3 sm:flex print:flex">
               <Figure label="Registered" value={perHour.reduce((n, p) => n + p.a, 0)} />
               <Figure label="Applied" value={perHour.reduce((n, p) => n + p.b, 0)} />
             </span>
@@ -87,9 +87,9 @@ function Charts({ c, t, companies }) {
       </div>
 
       {/* How it is adding up, and where the interviews stand */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3 print:grid-cols-3 print:gap-3">
         <ChartCard
-          className="lg:col-span-2"
+          className="lg:col-span-2 print:col-span-2"
           title="Growth through the day"
           sub={`Running totals, starting from ${(c.before_chart_day?.registrations ?? 0).toLocaleString('en-IN')} candidates and ${(c.before_chart_day?.applications ?? 0).toLocaleString('en-IN')} applications before ${dayLabel(fairDay)}`}
         >
@@ -101,14 +101,14 @@ function Charts({ c, t, companies }) {
       </div>
 
       <SectionLabel>Who the candidates are</SectionLabel>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 print:grid-cols-3 print:gap-3">
         <ChartCard title="Gender">
           <Donut items={c.gender} empty="No candidates yet" center="Candidates" />
         </ChartCard>
         <ChartCard title="Qualification" sub="Highest qualification">
           <Donut items={c.qualification} empty="No candidates yet" center="Candidates" />
         </ChartCard>
-        <ChartCard title="Where candidates are from" sub="Top towns and cities" className="md:col-span-2 xl:col-span-1">
+        <ChartCard title="Where candidates are from" sub="Top towns and cities" className="md:col-span-2 xl:col-span-1 print:col-span-1">
           <Donut items={c.city} empty="No candidates yet" center="Candidates" />
         </ChartCard>
         <ChartCard title="Age group">
@@ -117,17 +117,20 @@ function Charts({ c, t, companies }) {
         <ChartCard title="Year of passing">
           <VBars items={c.passing_year || []} total={cand.total} empty="No candidates yet" />
         </ChartCard>
-        <ChartCard title="Work experience" className="md:col-span-2 xl:col-span-1">
+        <ChartCard title="Work experience" className="md:col-span-2 xl:col-span-1 print:col-span-1">
           <VBars items={c.experience || []} total={cand.total} empty="No candidates yet" />
         </ChartCard>
       </div>
 
-      <SectionLabel>AI Knowledge</SectionLabel>
-      <AiCourse ai={cand.ai} total={cand.total} />
+      {/* Left out of the PDF report */}
+      <div className="space-y-4 print:hidden">
+        <SectionLabel>AI Knowledge</SectionLabel>
+        <AiCourse ai={cand.ai} total={cand.total} />
+      </div>
 
       <SectionLabel>Companies</SectionLabel>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <ChartCard title="Most applied companies" sub="Top 8 by applications" className="lg:col-span-2">
+      <div className="grid gap-4 lg:grid-cols-3 print:grid-cols-3 print:gap-3">
+        <ChartCard title="Most applied companies" sub="Top 8 by applications" className="lg:col-span-2 print:col-span-2">
           <VBars items={topCompanies} total={t.applications} empty="No applications yet" />
         </ChartCard>
         <ChartCard title="Companies" sub={`${c.companies.total.toLocaleString('en-IN')} registered`}>
@@ -269,8 +272,52 @@ function StudentList({ group, onClose }) {
   );
 }
 
+// Every company on paper, as a plain table (the screen table is paged and can stack on phones).
+function PrintCompanies({ companies }) {
+  if (!companies.length) return null;
+  const cols = [
+    ['Desk', 'room_no'],
+    ['Applied', 'applicants'],
+    ['Waiting', 'waiting'],
+    ['Interviewed', 'interviewed'],
+    ['Shortlisted', 'shortlisted'],
+    ['Selected', 'selected'],
+  ];
+  return (
+    <section className="mt-4 hidden print:block">
+      <SectionLabel>Applications by company</SectionLabel>
+      <table className="mt-2 w-full border-collapse text-xs">
+        <thead>
+          <tr className="border-b-2 border-slate-300 text-left text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+            <th className="w-8 py-2 pr-2">#</th>
+            <th className="py-2 pr-2">Company</th>
+            {cols.map(([h]) => (
+              <th key={h} className="py-2 pl-2 text-right">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {companies.map((c, i) => (
+            <tr key={c.id} className="break-inside-avoid border-b border-slate-100 even:bg-slate-50">
+              <td className="py-1.5 pr-2 tabular-nums text-slate-400">{i + 1}</td>
+              <td className="py-1.5 pr-2 font-bold text-slate-900">{c.name}</td>
+              {cols.map(([h, k]) => (
+                <td key={h} className={`py-1.5 pl-2 text-right tabular-nums ${k === 'selected' ? 'font-bold text-emerald-700' : k === 'applicants' ? 'font-bold' : 'text-slate-700'}`}>
+                  {c[k] || (k === 'room_no' ? '—' : 0)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function SectionLabel({ children }) {
-  return <h2 className="pt-4 text-xs font-extrabold uppercase tracking-widest text-slate-400">{children}</h2>;
+  return <h2 className="pt-4 text-xs font-extrabold uppercase tracking-widest text-slate-400 print:break-after-avoid print:pt-2">{children}</h2>;
 }
 
 // A small figure in a chart card's corner.
@@ -311,6 +358,8 @@ export default function Overview() {
   const [error, setError] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const { info } = useInfo();
   const paging = usePaging(data?.companies.length ?? 0, 10, '', { scroll: false });
 
   const load = useCallback(
@@ -346,6 +395,27 @@ export default function Overview() {
     }
   }
 
+  // The PDF is the browser's "Save as PDF": fresh numbers first, then the page is printed on A4
+  // landscape so the charts keep the desktop layout. The title becomes the PDF's file name.
+  async function downloadPdf() {
+    setPrinting(true);
+    await load();
+    const title = document.title;
+    const page = document.createElement('style');
+    page.textContent = '@page { size: A4 landscape; margin: 10mm; } @media print { main { zoom: 0.74; } }';
+    document.head.appendChild(page);
+    document.title = `${info.fair_name || 'Job fair'} - Overview - ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    const done = () => {
+      document.title = title;
+      page.remove();
+      setPrinting(false);
+      window.removeEventListener('afterprint', done);
+    };
+    window.addEventListener('afterprint', done);
+    // Let the fresh numbers render before the print dialog opens.
+    setTimeout(() => window.print(), 300);
+  }
+
   if (!data) return error ? <ErrorNote message={error} onRetry={load} /> : <PageLoader />;
   const t = data.totals;
   const pctOf = (n, d) => (d ? Math.round((n / d) * 100) : 0);
@@ -353,18 +423,34 @@ export default function Overview() {
 
   return (
     <>
-      <PageTitle title="Overview" sub="Live numbers for the fair, refreshed every 30 seconds.">
-        <span className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-bold text-slate-600 ring-1 ring-inset ring-slate-200">
-          <span className="relative flex size-2.5" aria-hidden="true">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" />
-            <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+      <div className="print:hidden">
+        <PageTitle title="Overview" sub="Live numbers for the fair, refreshed every 30 seconds.">
+          <Button variant="secondary" onClick={downloadPdf} loading={printing}>
+            {!printing && <FileDown className="size-4" aria-hidden="true" />} Download PDF
+          </Button>
+          <span className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-bold text-slate-600 ring-1 ring-inset ring-slate-200">
+            <span className="relative flex size-2.5" aria-hidden="true">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+            </span>
+            Live
           </span>
-          Live
-        </span>
-      </PageTitle>
+        </PageTitle>
+      </div>
+
+      {/* The heading of the PDF report */}
+      <header className="mb-4 hidden items-end justify-between gap-4 border-b border-slate-200 pb-3 print:flex">
+        <div>
+          <p className="text-xs font-extrabold uppercase tracking-widest text-blue-700">{info.fair_name || 'Job fair'}</p>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Overview report</h1>
+        </div>
+        <p className="text-right text-xs text-slate-500">
+          Generated {new Date().toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+        </p>
+      </header>
 
       {data.demo_data && (
-        <Notice icon={TriangleAlert} className="mb-5">
+        <Notice icon={TriangleAlert} className="mb-5 print:hidden">
           <p>Sample companies and candidates are loaded so you can try the screens. Clear them before sharing the link with real candidates.</p>
           <Button variant="secondary" size="sm" className="mt-3 text-rose-700" onClick={() => setConfirmClear(true)}>
             Clear sample data
@@ -372,7 +458,7 @@ export default function Overview() {
         </Notice>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5 [&>*:last-child]:col-span-2 sm:[&>*:last-child]:col-span-1">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5 print:grid-cols-5 [&>*:last-child]:col-span-2 sm:[&>*:last-child]:col-span-1 print:break-inside-avoid">
         <Tile icon={Users} tone="bg-blue-100 text-blue-700" value={t.candidates} label="Candidates" to="/admin/candidates" sub={`${t.applied_candidates.toLocaleString('en-IN')} have applied`} />
         <Tile icon={Building2} tone="bg-cyan-100 text-cyan-800" value={t.companies} label="Companies" to="/admin/companies" sub={t.empty_desks > 0 ? `${t.empty_desks.toLocaleString('en-IN')} desk QR ${t.empty_desks === 1 ? 'code' : 'codes'} not activated` : 'Every desk QR code is activated'} />
         <Tile icon={ClipboardList} tone="bg-violet-100 text-violet-800" value={t.applications} label="Applications" to="/admin/applications" sub={`${t.applied.toLocaleString('en-IN')} waiting for interview`} />
@@ -382,7 +468,9 @@ export default function Overview() {
 
       {data.charts && <Charts c={data.charts} t={t} companies={data.companies} />}
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-3">
+      <PrintCompanies companies={data.companies} />
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-3 print:hidden">
         <section className="min-w-0 xl:col-span-2">
           <h2 className="mb-3 text-lg font-extrabold text-slate-900">Applications by company</h2>
           <Table
