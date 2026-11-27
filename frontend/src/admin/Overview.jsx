@@ -122,7 +122,7 @@ function Charts({ c, t, companies }) {
         </ChartCard>
       </div>
 
-      <SectionLabel>AI Course</SectionLabel>
+      <SectionLabel>AI Knowledge</SectionLabel>
       <AiCourse ai={cand.ai} total={cand.total} />
 
       <SectionLabel>Companies</SectionLabel>
@@ -175,11 +175,11 @@ function AiCourse({ ai, total }) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
-      <ChartCard title="AI Course interest" sub="Answers to the last registration question. Click a group to see its students." className="lg:col-span-2">
+      <ChartCard title="AI Knowledge interest" sub="Answers to the last registration question. Click a group to see its students." className="lg:col-span-2">
         <Donut items={items} empty="No candidates yet" center="Candidates" onSelect={setGroup} />
       </ChartCard>
       {group && <StudentList group={group} onClose={() => setGroup(null)} />}
-      <ChartCard title="AI Course" sub="Click a group to see its students">
+      <ChartCard title="AI Knowledge" sub="Click a group to see its students">
         <ul className="space-y-2">
           {[
             { ...items[0], tone: 'bg-emerald-50 text-emerald-800 ring-emerald-200 hover:bg-emerald-100' },

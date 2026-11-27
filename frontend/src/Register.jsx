@@ -74,7 +74,7 @@ function AiCourseFields({ v, set, errors }) {
 // candidates log in with their mobile number alone.
 const STEPS = [
   ...FIELD_GROUPS,
-  { title: 'AI Course', sub: 'One last question before you register', fields: ['ai_course'], Fields: AiCourseFields },
+  { title: 'AI Knowledge', sub: 'One last question before you register', fields: ['ai_course'], Fields: AiCourseFields },
 ];
 const STEP_COUNT = STEPS.length;
 const aiCourseErrors = (v) => (v.ai_course ? {} : { ai_course: 'Please choose Yes or No' });
