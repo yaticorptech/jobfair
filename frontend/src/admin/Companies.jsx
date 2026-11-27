@@ -509,24 +509,31 @@ export default function Companies() {
               {c.room_no ? (
                 <span className="inline-block rounded-xl bg-amber-100 px-3 py-1 text-base font-extrabold text-amber-950">{c.room_no}</span>
               ) : (
-                <span className="rounded-lg bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">No desk yet</span>
+                <span className="inline-block whitespace-nowrap rounded-lg bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">No desk yet</span>
               )}
             </Td>
             <Td label="Floor / block" className="max-w-44 text-slate-600">{c.location || '—'}</Td>
-            <Td label="Roles" className="max-w-64 text-slate-600">{c.roles.length ? c.roles.join(', ') : '—'}</Td>
+            <Td label="Roles" className="max-w-64 text-slate-600">
+              <p className="line-clamp-2" title={c.roles.join(', ')}>{c.roles.length ? c.roles.join(', ') : '—'}</p>
+            </Td>
             <Td label="Vacancies">{c.vacancies || '—'}</Td>
             <Td label="Applied" className="font-bold text-slate-900">{c.applicants}</Td>
             <Td actions>
               <div className="flex justify-end gap-1">
-                {(isDesk(c) || c.desk_id || c.room_no) && (
+                {isDesk(c) || c.desk_id || c.room_no ? (
                   <Link to={`/admin/qr?company=${c.desk_id || c.id}`} aria-label={`Desk QR code of ${labelOf(c)}`} title="Desk QR code" className="grid size-11 place-items-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200">
                     <QrCode className="size-4" />
                   </Link>
+                ) : (
+                  // Keeps the other buttons in the same columns on every row.
+                  <span className="hidden size-11 sm:block" aria-hidden="true" />
                 )}
-                {!isDesk(c) && (
+                {!isDesk(c) ? (
                   <button type="button" onClick={() => setLogin(c)} aria-label={`Company login of ${labelOf(c)}`} title="Company login (desk and access code)" className="grid size-11 cursor-pointer place-items-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200">
                     <KeyRound className="size-4" />
                   </button>
+                ) : (
+                  <span className="hidden size-11 sm:block" aria-hidden="true" />
                 )}
                 <button type="button" onClick={() => setEditing(c)} aria-label={`Edit ${labelOf(c)}`} title="Edit" className="grid size-11 cursor-pointer place-items-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200">
                   <Pencil className="size-4" />
